@@ -1,0 +1,2286 @@
+# Sentinel 项目架构文档
+## 基于 Eino 框架的智能 Agent 系统设计与实现
+
+---
+
+# 目录
+
+1. [项目概述与架构总览](#第一章-项目概述与架构总览)
+2. [Eino 框架基础与核心概念](#第二章-eino-框架基础与核心概念)
+3. [聊天 Agent 流水线详解](#第三章-聊天-agent-流水线详解)
+4. [知识库索引流水线详解](#第四章-知识库索引流水线详解)
+5. [Tool 工具系统详解](#第五章-tool-工具系统详解)
+6. [模型与 Embedding 集成](#第六章-模型与-embedding-集成)
+7. [向量检索与存储系统](#第七章-向量检索与存储系统)
+8. [Multi-Agent Supervisor 多智能体架构](#第八章-multi-agent-supervisor-多智能体架构)
+9. [Plan-Execute-Replan 模式](#第九章-plan-execute-replan-模式)
+10. [Skill 技能系统](#第十章-skill-技能系统)
+11. [API 层与服务集成](#第十一章-api-层与服务集成)
+12. [系统优化与工程实践](#第十二章-系统优化与工程实践)
+13. [配置管理与部署](#第十三章-配置管理与部署)
+
+---
+
+# 第一章 项目概述与架构总览
+
+## 1.1 项目简介
+
+Sentinel 是一个基于字节跳动开源的 Eino 框架构建的企业级智能 Agent 系统。该系统主要面向安全运维场景，提供智能对话、告警分析、知识库检索、自动化运维等核心能力。
+
+### 1.1.1 项目定位
+
+Sentinel 定位为企业级 AI 运维助手，具备以下核心特性：
+
+- **多智能体协作**：基于 Supervisor 模式的多 Agent 架构，支持意图路由、任务分发和跨 Agent 上下文共享
+- **智能对话能力**：基于 ReAct Agent 模式，支持多轮对话和工具调用
+- **知识库增强**：集成 RAG（检索增强生成）技术，基于 Milvus 向量数据库实现语义检索
+- **自动化运维**：支持 Prometheus 告警分析、日志查询、安全事件分析、风险评估等运维任务
+- **计划执行能力**：基于 Eino ADK 的 Plan-Execute-Replan 模式，处理复杂多步骤任务
+- **技能系统**：内置事件分析、日志诊断、威胁狩猎等预定义技能，支持参数化执行
+- **可扩展架构**：基于 Eino 框架的 Graph 编排，支持灵活的流水线定制
+
+### 1.1.2 技术栈概览
+
+| 技术领域 | 技术选型 | 版本 |
+|---------|---------|------|
+| AI 框架 | Eino (CloudWeGo) | v0.7.13 |
+| Agent 开发套件 | Eino ADK | v0.7.13 |
+| MCP 协议 | mcp-go | v0.42.0 |
+| Web 框架 | GoFrame | v2.7.1 |
+| 向量数据库 | Milvus | v2.4.2 |
+| 关系数据库 | MySQL (GORM) | v1.31.0 |
+| LLM 模型 | DeepSeek V3 / V3-Think | - |
+| Embedding | 豆包 (ARK) | 1024 维 |
+| 语言版本 | Go | 1.24.0 |
+
+## 1.2 项目目录结构
+
+```
+Sentinel/
+├── api/                              # API 定义层
+│   ├── chat/v1/                      # 聊天 & Supervisor API
+│   ├── event/v1/                     # 事件管理 & Pipeline 流式 API
+│   ├── report/v1/                    # 报告生成 API
+│   ├── skill/v1/                     # 技能执行 API
+│   └── subscription/v1/             # 订阅管理 API
+├── cmd/cli/                          # CLI 命令行入口
+├── internal/                         # 内部实现
+│   ├── ai/                           # AI 核心模块 ⭐
+│   │   ├── agent/                    # Agent 流水线集合
+│   │   │   ├── supervisor/           # 🆕 多 Agent 调度器（路由/执行/注册/记忆）
+│   │   │   ├── chat_pipeline/        # 聊天 Agent（RAG + ReAct）
+│   │   │   ├── event_analysis_pipeline/  # 事件分析 Agent
+│   │   │   ├── report_pipeline/      # 报告生成 Agent
+│   │   │   ├── risk_pipeline/        # 风险评估 Agent
+│   │   │   ├── plan_execute_replan/  # Plan-Execute-Replan Agent
+│   │   │   ├── event_extraction/     # 事件提取流水线
+│   │   │   ├── event_dedup/          # 事件去重流水线
+│   │   │   ├── event_indexer/        # 事件向量索引
+│   │   │   ├── event_pipeline/       # 事件处理流水线
+│   │   │   ├── knowledge_index_pipeline/  # 知识库索引流水线
+│   │   │   ├── report_generator/     # 报告生成器
+│   │   │   └── risk_assessment/      # 风险评估引擎
+│   │   ├── skills/                   # 🆕 技能系统
+│   │   │   ├── builtin/              # 内置技能（事件分析/日志诊断/威胁狩猎）
+│   │   │   ├── executor.go           # 技能执行器
+│   │   │   ├── registry.go           # 技能注册表
+│   │   │   └── types.go              # 技能类型定义
+│   │   ├── embedder/                 # Embedding 组件
+│   │   ├── indexer/                  # 索引组件
+│   │   ├── models/                   # 模型配置（DeepSeek V3/V3-Think）
+│   │   ├── retriever/                # Milvus 检索组件
+│   │   └── tools/                    # 工具集合（10+ 工具）
+│   ├── controller/                   # 控制器层（chat/event/report/skill/...）
+│   ├── logic/                        # 业务逻辑层（chat/event/report/sse/...）
+│   ├── database/                     # 数据库初始化与迁移
+│   ├── middleware/                   # HTTP 中间件
+│   ├── auth/                         # JWT & RBAC 认证
+│   ├── cache/                        # 缓存层
+│   ├── scheduler/                    # 任务调度
+│   ├── notify/                       # 通知与 Webhook
+│   └── ...                           # 其他业务模块
+├── utility/                          # 工具类
+│   ├── client/                       # Milvus 客户端初始化
+│   ├── common/                       # 公共常量
+│   ├── log_call_back/                # 日志回调
+│   └── mem/                          # 内存管理
+└── go.mod                            # 依赖管理（Go 1.24）
+```
+
+## 1.3 系统架构图
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         Sentinel 系统架构                            │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                      API 层 (GoFrame :6872)                        │  │
+│  │  /api/chat/*  /api/event/*  /api/report/*  /api/skill/*  /api/sub/*│  │
+│  └────────────────────────────┬───────────────────────────────────────┘  │
+│                               ▼                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                    Controller → Logic → SSE                        │  │
+│  └────────────────────────────┬───────────────────────────────────────┘  │
+│                               ▼                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                  Supervisor (Host Agent) ⭐                         │  │
+│  │  ┌──────────┐    ┌──────────────┐    ┌──────────────────────────┐  │  │
+│  │  │  Router   │───▶│   Executor   │───▶│     SharedMemory        │  │  │
+│  │  │ (LLM意图  │    │ (Agent分发)  │    │ (分层上下文/自动压缩)    │  │  │
+│  │  │  分类)    │    │              │    │                          │  │  │
+│  │  └──────────┘    └──────┬───────┘    └──────────────────────────┘  │  │
+│  │                         │ 路由分发                                  │  │
+│  │         ┌───────┬───────┼───────┬───────┐                          │  │
+│  │         ▼       ▼       ▼       ▼       ▼                          │  │
+│  │  ┌──────────┐┌──────┐┌──────┐┌─────┐┌──────┐                      │  │
+│  │  │ChatAgent ││Event ││Report││Risk ││Plan  │                      │  │
+│  │  │RAG+ReAct ││Agent ││Agent ││Agent││Agent │                      │  │
+│  │  │          ││      ││      ││     ││PER   │                      │  │
+│  │  └──────────┘└──────┘└──────┘└─────┘└──────┘                      │  │
+│  │   每个 SubAgent 内部: InputToRag→Milvus→Template→ReAct             │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                               │                                          │
+│  ┌────────────────────────────┼───────────────────────────────────────┐  │
+│  │                      Tools 工具集 (10+)                             │  │
+│  │  Events │ Alerts │ Logs(MCP) │ Docs │ Reports │ Subscriptions     │  │
+│  │  MySQL  │ CurrentTime │ SimilarEvents │ EventDetail                │  │
+│  └────────────────────────────┼───────────────────────────────────────┘  │
+│                               ▼                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                         外部服务层                                  │  │
+│  │  Milvus(向量库)  MySQL(关系库)  Prometheus  DeepSeek  豆包ARK      │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+## 1.4 核心依赖分析
+
+项目的核心依赖定义在 `go.mod` 文件中：
+
+**文件位置**: `/go.mod`
+
+```go
+module Sentinel
+
+go 1.24.0
+
+require (
+    // Eino 核心框架
+    github.com/cloudwego/eino v0.7.13
+    github.com/cloudwego/eino-examples v0.0.0-20250929123132-bbbae0931948
+
+    // Eino 扩展组件 - Embedding
+    github.com/cloudwego/eino-ext/components/embedding/dashscope v0.0.0-20260109062358-b9080dbc7bed
+
+    // Eino 扩展组件 - 向量存储
+    github.com/cloudwego/eino-ext/components/indexer/milvus v0.0.0-20251011073417-75b93b87b8a9
+    github.com/cloudwego/eino-ext/components/retriever/milvus v0.0.0-20251011073417-75b93b87b8a9
+
+    // Eino 扩展组件 - 模型
+    github.com/cloudwego/eino-ext/components/model/ark v0.1.64
+    github.com/cloudwego/eino-ext/components/model/openai v0.1.1
+
+    // Eino 扩展组件 - 工具
+    github.com/cloudwego/eino-ext/components/tool/mcp v0.0.5
+    github.com/cloudwego/eino-ext/components/tool/duckduckgo/v2 v2.0.0-20250826125654-37d4a5029810
+
+    // Eino 扩展组件 - 文档处理
+    github.com/cloudwego/eino-ext/components/document/loader/file v0.0.0-20251022075257-f53d64495d2f
+    github.com/cloudwego/eino-ext/components/document/transformer/splitter/markdown v0.0.0-20251022075257-f53d64495d2f
+
+    // Web 框架
+    github.com/gogf/gf/v2 v2.7.1
+
+    // 向量数据库客户端
+    github.com/milvus-io/milvus-sdk-go/v2 v2.4.2
+
+    // MCP 协议支持
+    github.com/mark3labs/mcp-go v0.42.0
+
+    // 数据库
+    gorm.io/driver/mysql v1.6.0
+    gorm.io/gorm v1.31.0
+)
+```
+
+### 1.4.1 Eino 组件依赖关系图
+
+```
+                    ┌─────────────────────┐
+                    │   eino (核心框架)    │
+                    │      v0.7.13        │
+                    └──────────┬──────────┘
+                               │
+           ┌───────────────────┼───────────────────┐
+           │                   │                   │
+           ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│    compose      │ │    schema       │ │   components    │
+│  (图编排引擎)    │ │  (数据结构)     │ │   (组件接口)    │
+└─────────────────┘ └─────────────────┘ └────────┬────────┘
+                                                  │
+        ┌─────────────────────────────────────────┼─────────────────────────────────────────┐
+        │                    │                    │                    │                    │
+        ▼                    ▼                    ▼                    ▼                    ▼
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│    model     │   │  embedding   │   │  retriever   │   │   indexer    │   │    tool      │
+│   (模型)     │   │ (向量化)     │   │   (检索)     │   │   (索引)     │   │   (工具)     │
+└──────┬───────┘   └──────┬───────┘   └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
+       │                  │                  │                  │                  │
+       ▼                  ▼                  ▼                  ▼                  ▼
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│model/openai  │   │embedding/ark │   │retriever/    │   │indexer/      │   │ tool/mcp     │
+│              │   │              │   │milvus        │   │milvus        │   │ tool/duckgo  │
+└──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘
+```
+
+## 1.5 数据流概览
+
+### 1.5.1 聊天请求数据流
+
+```
+用户请求                                                              最终响应
+   │                                                                     ▲
+   ▼                                                                     │
+┌──────┐    ┌──────────┐    ┌────────────┐    ┌──────────┐    ┌──────────┐
+│ HTTP │───▶│Controller│───▶│BuildChatAgent│───▶│  Invoke  │───▶│ Response │
+│ POST │    │  Chat()  │    │   Graph    │    │  执行    │    │  返回    │
+└──────┘    └──────────┘    └────────────┘    └──────────┘    └──────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────┐
+                    │      Graph 内部流程      │
+                    │                         │
+                    │  START                  │
+                    │    │                    │
+                    │    ├──▶ InputToRag      │
+                    │    │        │           │
+                    │    │        ▼           │
+                    │    │   MilvusRetriever  │
+                    │    │        │           │
+                    │    │        ▼           │
+                    │    └──▶ ChatTemplate ◀──┤
+                    │              │          │
+                    │              ▼          │
+                    │         ReactAgent      │
+                    │              │          │
+                    │              ▼          │
+                    │            END          │
+                    └─────────────────────────┘
+```
+
+### 1.5.2 知识索引数据流
+
+```
+文档源                                                              索引完成
+   │                                                                   ▲
+   ▼                                                                   │
+┌──────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│ File │───▶│FileLoader│───▶│ Markdown │───▶│ Milvus   │───▶│  IDs     │
+│ .md  │    │          │    │ Splitter │    │ Indexer  │    │  返回    │
+└──────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
+                                  │
+                                  ▼
+                         ┌───────────────┐
+                         │   Embedding   │
+                         │   向量化处理   │
+                         └───────────────┘
+```
+
+---
+
+# 第二章 Eino 框架基础与核心概念
+
+## 2.1 Eino 框架简介
+
+Eino 是字节跳动 CloudWeGo 团队开源的 Go 语言 AI 应用开发框架，专注于构建基于大语言模型（LLM）的智能应用。框架名称 "Eino" 源自芬兰语，意为"唯一的"，体现了其在 Go 生态中独特的定位。
+
+### 2.1.1 Eino 核心设计理念
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Eino 设计理念                                 │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │  组件化设计  │  │  图编排引擎  │  │  类型安全   │             │
+│  │             │  │             │  │             │             │
+│  │ 标准化接口   │  │  DAG 执行   │  │  泛型支持   │             │
+│  │ 可插拔组件   │  │  并行处理   │  │  编译检查   │             │
+│  └─────────────┘  └─────────────┘  └─────────────┘             │
+│                                                                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │  流式处理   │  │  回调机制   │  │  扩展生态   │             │
+│  │             │  │             │  │             │             │
+│  │ Stream API  │  │ Callbacks   │  │ eino-ext    │             │
+│  │ 实时响应    │  │ 可观测性    │  │ 丰富组件    │             │
+│  └─────────────┘  └─────────────┘  └─────────────┘             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 2.1.2 Eino 与其他框架对比
+
+| 特性 | Eino (Go) | LangChain (Python) | LlamaIndex (Python) |
+|------|-----------|-------------------|---------------------|
+| 语言 | Go | Python | Python |
+| 类型安全 | ✅ 强类型 + 泛型 | ❌ 动态类型 | ❌ 动态类型 |
+| 性能 | ✅ 高性能 | ⚠️ 中等 | ⚠️ 中等 |
+| 并发模型 | ✅ Goroutine | ⚠️ asyncio | ⚠️ asyncio |
+| 编排方式 | Graph DAG | Chain/Agent | Pipeline |
+| 生态成熟度 | ⚠️ 发展中 | ✅ 成熟 | ✅ 成熟 |
+
+## 2.2 Eino 核心模块架构
+
+### 2.2.1 模块层次结构
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         应用层 (Application)                         │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  Sentinel / 其他业务应用                                │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────────┤
+│                         ADK 层 (Agent Development Kit)              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │
+│  │    Runner    │  │   prebuilt   │  │   Message    │              │
+│  │   执行器     │  │  预置Agent   │  │   消息处理   │              │
+│  └──────────────┘  └──────────────┘  └──────────────┘              │
+├─────────────────────────────────────────────────────────────────────┤
+│                         Flow 层 (Agent Patterns)                    │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │
+│  │    ReAct     │  │ PlanExecute  │  │   Custom     │              │
+│  │   推理行动   │  │  计划执行    │  │   自定义     │              │
+│  └──────────────┘  └──────────────┘  └──────────────┘              │
+├─────────────────────────────────────────────────────────────────────┤
+│                         Compose 层 (Graph Orchestration)            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │
+│  │    Graph     │  │    Chain     │  │   Runnable   │              │
+│  │   图编排     │  │   链式调用   │  │   可执行体   │              │
+│  └──────────────┘  └──────────────┘  └──────────────┘              │
+├─────────────────────────────────────────────────────────────────────┤
+│                         Components 层 (Core Components)             │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐           │
+│  │ Model  │ │Embedding│ │Retriever│ │Indexer │ │  Tool  │           │
+│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘           │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐                       │
+│  │ Prompt │ │ Loader │ │Transformer│ │Document│                     │
+│  └────────┘ └────────┘ └────────┘ └────────┘                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                         Schema 层 (Data Structures)                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │
+│  │   Message    │  │   ToolInfo   │  │   Document   │              │
+│  │   消息结构   │  │   工具信息   │  │   文档结构   │              │
+│  └──────────────┘  └──────────────┘  └──────────────┘              │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2.2 核心包导入说明
+
+在 Sentinel 项目中，主要使用以下 Eino 包：
+
+```go
+// 核心编排包
+import "github.com/cloudwego/eino/compose"      // 图编排引擎
+
+// 数据结构包
+import "github.com/cloudwego/eino/schema"       // 消息、工具等数据结构
+
+// 组件接口包
+import "github.com/cloudwego/eino/components/model"      // 模型接口
+import "github.com/cloudwego/eino/components/embedding"  // Embedding 接口
+import "github.com/cloudwego/eino/components/retriever"  // 检索器接口
+import "github.com/cloudwego/eino/components/indexer"    // 索引器接口
+import "github.com/cloudwego/eino/components/tool"       // 工具接口
+import "github.com/cloudwego/eino/components/prompt"     // 提示词模板
+import "github.com/cloudwego/eino/components/document"   // 文档处理
+
+// 回调机制
+import "github.com/cloudwego/eino/callbacks"    // 回调处理器
+
+// Agent 模式
+import "github.com/cloudwego/eino/flow/agent/react"  // ReAct Agent
+
+// ADK (Agent Development Kit)
+import "github.com/cloudwego/eino/adk"                    // ADK 核心
+import "github.com/cloudwego/eino/adk/prebuilt/planexecute"  // 预置 Agent
+```
+
+## 2.3 compose 包：图编排引擎
+
+### 2.3.1 Graph 核心概念
+
+`compose.Graph` 是 Eino 框架的核心编排引擎，采用有向无环图（DAG）模式组织处理流程。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Graph 核心概念                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   Node (节点)           Edge (边)           Runnable        │
+│   ┌─────────┐          ─────────▶          ┌─────────┐     │
+│   │ Lambda  │                              │ Invoke  │     │
+│   │ Model   │          数据流向             │ Stream  │     │
+│   │Retriever│                              │ Collect │     │
+│   │ Indexer │                              └─────────┘     │
+│   │Template │                                              │
+│   └─────────┘                                              │
+│                                                             │
+│   特殊节点:                                                  │
+│   • compose.START  - 图的起始点                             │
+│   • compose.END    - 图的终止点                             │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 2.3.2 Graph 创建与编译
+
+**文件位置**: `internal/ai/agent/chat_pipeline/orchestration.go:10-49`
+
+```go
+// 创建泛型 Graph，指定输入输出类型
+// 输入: *UserMessage  输出: *schema.Message
+g := compose.NewGraph[*UserMessage, *schema.Message]()
+
+// 添加各类节点
+_ = g.AddLambdaNode(nodeName, lambdaFunc, options...)      // Lambda 节点
+_ = g.AddChatTemplateNode(nodeName, template)              // 模板节点
+_ = g.AddRetrieverNode(nodeName, retriever, options...)    // 检索节点
+
+// 连接节点（定义数据流向）
+_ = g.AddEdge(compose.START, "NodeA")   // 从起点到 NodeA
+_ = g.AddEdge("NodeA", "NodeB")         // NodeA 到 NodeB
+_ = g.AddEdge("NodeB", compose.END)     // NodeB 到终点
+
+// 编译图，生成可执行的 Runnable
+r, err := g.Compile(ctx,
+    compose.WithGraphName("ChatAgent"),
+    compose.WithNodeTriggerMode(compose.AllPredecessor),
+)
+```
+
+### 2.3.3 节点类型详解
+
+Eino 支持多种节点类型，每种类型对应不同的处理逻辑：
+
+| 节点类型 | 添加方法 | 用途 | 项目中使用 |
+|---------|---------|------|-----------|
+| Lambda | `AddLambdaNode` | 自定义处理逻辑 | InputToRag, ReactAgent |
+| ChatTemplate | `AddChatTemplateNode` | 提示词模板 | ChatTemplate |
+| Retriever | `AddRetrieverNode` | 向量检索 | MilvusRetriever |
+| Indexer | `AddIndexerNode` | 向量索引 | MilvusIndexer |
+| Loader | `AddLoaderNode` | 文档加载 | FileLoader |
+| Transformer | `AddDocumentTransformerNode` | 文档转换 | MarkdownSplitter |
+
+### 2.3.4 节点触发模式
+
+```go
+// 编译选项：节点触发模式
+compose.WithNodeTriggerMode(compose.AllPredecessor)  // 等待所有前置节点完成
+compose.WithNodeTriggerMode(compose.AnyPredecessor)  // 任一前置节点完成即触发
+```
+
+```
+AllPredecessor 模式:                    AnyPredecessor 模式:
+
+    A ──┐                                   A ──┐
+        ├──▶ C (等待 A 和 B)                    ├──▶ C (A 或 B 完成即触发)
+    B ──┘                                   B ──┘
+```
+
+## 2.4 schema 包：核心数据结构
+
+### 2.4.1 Message 消息结构
+
+`schema.Message` 是 Eino 中最核心的数据结构，用于表示对话消息。
+
+**文件位置**: `internal/ai/agent/chat_pipeline/types.go:1-9`
+
+```go
+package chat_pipeline
+
+import "github.com/cloudwego/eino/schema"
+
+type UserMessage struct {
+    ID      string            `json:"id"`
+    Query   string            `json:"query"`
+    History []*schema.Message `json:"history"`  // 历史消息列表
+}
+```
+
+### 2.4.2 Message 类型工厂方法
+
+```go
+// 创建不同角色的消息
+schema.UserMessage("用户输入内容")      // 用户消息
+schema.SystemMessage("系统提示内容")    // 系统消息
+schema.AssistantMessage("助手回复")     // 助手消息
+```
+
+### 2.4.3 ToolInfo 工具信息结构
+
+**文件位置**: `internal/ai/tools/query_events.go:19-29`
+
+```go
+func (t *EventQueryTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+    return &schema.ToolInfo{
+        Name: "query_events",
+        Desc: "查询安全事件列表，包括漏洞、威胁情报等安全事件",
+        ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+            "severity": {Type: schema.String, Desc: "按严重程度筛选"},
+            "status":   {Type: schema.String, Desc: "按状态筛选"},
+            "limit":    {Type: schema.Integer, Desc: "返回数量限制"},
+        }),
+    }, nil
+}
+```
+
+## 2.5 callbacks 包：回调机制
+
+### 2.5.1 回调处理器
+
+**文件位置**: `utility/log_call_back/log_call_back.go:1-42`
+
+```go
+package log_call_back
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "github.com/cloudwego/eino/callbacks"
+)
+
+func LogCallback(config *LogCallbackConfig) callbacks.Handler {
+    builder := callbacks.NewHandlerBuilder()
+
+    // 节点开始时触发
+    builder.OnStartFn(func(ctx context.Context, info *callbacks.RunInfo,
+        input callbacks.CallbackInput) context.Context {
+        fmt.Printf("[view start]:[%s:%s:%s]\n",
+            info.Component, info.Type, info.Name)
+        return ctx
+    })
+
+    // 节点结束时触发
+    builder.OnEndFn(func(ctx context.Context, info *callbacks.RunInfo,
+        output callbacks.CallbackOutput) context.Context {
+        fmt.Printf("[view end]:[%s:%s:%s]\n",
+            info.Component, info.Type, info.Name)
+        return ctx
+    })
+
+    return builder.Build()
+}
+```
+
+---
+
+# 第三章 聊天 Agent 流水线详解
+
+## 3.1 Chat Pipeline 概述
+
+Chat Pipeline 是 Sentinel 的核心对话处理流水线，作为 Supervisor 架构下 ChatAgent 的内部实现。基于 Eino 的 Graph 编排实现了 RAG（检索增强生成）+ ReAct Agent 的混合架构。同样的 Pipeline 模式也被 EventAgent、ReportAgent、RiskAgent 复用，区别在于各自的系统 Prompt 和工具集。
+
+### 3.1.1 流水线架构图
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Chat Pipeline 架构                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   输入: UserMessage                                                      │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │  { ID: "xxx", Query: "用户问题", History: [...] }                │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+│                                    ▼                                    │
+│                            ┌──────────────┐                             │
+│                            │    START     │                             │
+│                            └──────┬───────┘                             │
+│                                   │                                     │
+│                    ┌──────────────┴──────────────┐                      │
+│                    │                             │                      │
+│                    ▼                             ▼                      │
+│           ┌──────────────┐              ┌──────────────┐                │
+│           │  InputToRag  │              │ InputToChat  │                │
+│           │  提取Query   │              │ 构建上下文   │                │
+│           └──────┬───────┘              └──────┬───────┘                │
+│                  │                             │                        │
+│                  ▼                             │                        │
+│           ┌──────────────┐                     │                        │
+│           │MilvusRetriever│                    │                        │
+│           │  向量检索     │                    │                        │
+│           └──────┬───────┘                     │                        │
+│                  │                             │                        │
+│                  │  documents                  │  content, history      │
+│                  └──────────────┬──────────────┘                        │
+│                                 │                                       │
+│                                 ▼                                       │
+│                         ┌──────────────┐                                │
+│                         │ ChatTemplate │                                │
+│                         │  提示词模板   │                                │
+│                         └──────┬───────┘                                │
+│                                │                                        │
+│                                ▼                                        │
+│                         ┌──────────────┐                                │
+│                         │  ReactAgent  │                                │
+│                         │  推理+工具   │                                │
+│                         └──────┬───────┘                                │
+│                                │                                        │
+│                                ▼                                        │
+│                         ┌──────────────┐                                │
+│                         │     END      │                                │
+│                         └──────────────┘                                │
+│                                │                                        │
+│   输出: *schema.Message                                                  │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │  { Role: "assistant", Content: "AI回复内容" }                    │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+## 3.2 Graph 编排实现
+
+### 3.2.1 完整编排代码
+
+**文件位置**: `internal/ai/agent/chat_pipeline/orchestration.go`
+
+```go
+package chat_pipeline
+
+import (
+    "context"
+    "github.com/cloudwego/eino/compose"
+    "github.com/cloudwego/eino/schema"
+)
+
+func BuildChatAgent(ctx context.Context) (r compose.Runnable[*UserMessage, *schema.Message], err error) {
+    // 定义节点名称常量
+    const (
+        InputToRag      = "InputToRag"
+        ChatTemplate    = "ChatTemplate"
+        ReactAgent      = "ReactAgent"
+        MilvusRetriever = "MilvusRetriever"
+        InputToChat     = "InputToChat"
+    )
+
+    // 创建 Graph，指定输入输出类型
+    g := compose.NewGraph[*UserMessage, *schema.Message]()
+
+    // 添加 InputToRag 节点：提取用户查询用于 RAG 检索
+    _ = g.AddLambdaNode(InputToRag,
+        compose.InvokableLambdaWithOption(newInputToRagLambda),
+        compose.WithNodeName("UserMessageToRag"))
+
+    // 添加 ChatTemplate 节点：提示词模板
+    chatTemplateKeyOfChatTemplate, err := newChatTemplate(ctx)
+    if err != nil {
+        return nil, err
+    }
+    _ = g.AddChatTemplateNode(ChatTemplate, chatTemplateKeyOfChatTemplate)
+
+    // 添加 ReactAgent 节点：ReAct 推理引擎
+    reactAgentKeyOfLambda, err := newReactAgentLambda(ctx)
+    if err != nil {
+        return nil, err
+    }
+    _ = g.AddLambdaNode(ReactAgent, reactAgentKeyOfLambda,
+        compose.WithNodeName("ReActAgent"))
+
+    // 添加 MilvusRetriever 节点：向量检索
+    milvusRetrieverKeyOfRetriever, err := newRetriever(ctx)
+    if err != nil {
+        return nil, err
+    }
+    // 设置输出 key 为 "documents"，匹配 ChatTemplate 的占位符
+    _ = g.AddRetrieverNode(MilvusRetriever, milvusRetrieverKeyOfRetriever,
+        compose.WithOutputKey("documents"))
+
+    // 添加 InputToChat 节点：构建对话上下文
+    _ = g.AddLambdaNode(InputToChat,
+        compose.InvokableLambdaWithOption(newInputToChatLambda),
+        compose.WithNodeName("UserMessageToChat"))
+
+    // 定义边（数据流向）
+    _ = g.AddEdge(compose.START, InputToRag)      // START -> InputToRag
+    _ = g.AddEdge(compose.START, InputToChat)     // START -> InputToChat (并行)
+    _ = g.AddEdge(ReactAgent, compose.END)        // ReactAgent -> END
+    _ = g.AddEdge(InputToRag, MilvusRetriever)    // InputToRag -> MilvusRetriever
+    _ = g.AddEdge(MilvusRetriever, ChatTemplate)  // MilvusRetriever -> ChatTemplate
+    _ = g.AddEdge(InputToChat, ChatTemplate)      // InputToChat -> ChatTemplate
+    _ = g.AddEdge(ChatTemplate, ReactAgent)       // ChatTemplate -> ReactAgent
+
+    // 编译 Graph
+    r, err = g.Compile(ctx,
+        compose.WithGraphName("ChatAgent"),
+        compose.WithNodeTriggerMode(compose.AllPredecessor))
+    if err != nil {
+        return nil, err
+    }
+    return r, err
+}
+```
+
+### 3.2.2 数据流向分析
+
+```
+数据流向详解:
+
+1. 并行分支 (从 START 开始)
+   ┌─────────────────────────────────────────────────────────────┐
+   │  START                                                      │
+   │    │                                                        │
+   │    ├──▶ InputToRag ──▶ MilvusRetriever ──┐                 │
+   │    │    (提取Query)    (向量检索)         │                 │
+   │    │                                      ▼                 │
+   │    │                              ┌──────────────┐          │
+   │    └──▶ InputToChat ─────────────▶│ ChatTemplate │          │
+   │         (构建上下文)               └──────────────┘          │
+   └─────────────────────────────────────────────────────────────┘
+
+2. 数据合并 (ChatTemplate 节点)
+   ┌─────────────────────────────────────────────────────────────┐
+   │  ChatTemplate 接收的数据:                                    │
+   │  • documents  ← MilvusRetriever 输出 (检索到的文档)          │
+   │  • content    ← InputToChat 输出 (用户问题)                  │
+   │  • history    ← InputToChat 输出 (对话历史)                  │
+   │  • date       ← InputToChat 输出 (当前时间)                  │
+   └─────────────────────────────────────────────────────────────┘
+```
+
+## 3.3 Lambda 节点实现
+
+### 3.3.1 InputToRag Lambda
+
+**文件位置**: `internal/ai/agent/chat_pipeline/lambda_func.go:8-11`
+
+```go
+// 从 UserMessage 中提取 Query 用于向量检索
+func newInputToRagLambda(ctx context.Context, input *UserMessage, opts ...any) (output string, err error) {
+    return input.Query, nil
+}
+```
+
+### 3.3.2 InputToChat Lambda
+
+**文件位置**: `internal/ai/agent/chat_pipeline/lambda_func.go:13-20`
+
+```go
+// 构建对话上下文，包含用户问题、历史记录和当前时间
+func newInputToChatLambda(ctx context.Context, input *UserMessage, opts ...any) (output map[string]any, err error) {
+    return map[string]any{
+        "content": input.Query,           // 用户当前问题
+        "history": input.History,         // 对话历史
+        "date":    time.Now().Format("2006-01-02 15:04:05"),  // 当前时间
+    }, nil
+}
+```
+
+## 3.4 Retriever 节点实现
+
+### 3.4.1 Milvus 检索器配置
+
+**文件位置**: `internal/ai/retriever/retriever.go:1-35`
+
+```go
+package retriever
+
+import (
+    "Sentinel/internal/ai/embedder"
+    "Sentinel/utility/client"
+    "Sentinel/utility/common"
+    "context"
+
+    "github.com/cloudwego/eino-ext/components/retriever/milvus"
+    "github.com/cloudwego/eino/components/retriever"
+    "github.com/milvus-io/milvus-sdk-go/v2/entity"
+)
+
+func NewMilvusRetriever(ctx context.Context) (rtr retriever.Retriever, err error) {
+    // 创建 Milvus 客户端
+    cli, err := client.NewMilvusClient(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    // 创建 Embedding 组件
+    eb, err := embedder.DoubaoEmbedding(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    // 配置 Milvus Retriever
+    r, err := milvus.NewRetriever(ctx, &milvus.RetrieverConfig{
+        Client:      cli,                        // Milvus 客户端
+        Collection:  common.MilvusCollectionName, // 集合名称
+        VectorField: "vector",                   // 向量字段名
+        TopK:        1,                          // 返回最相似的 1 条
+        Embedding:   eb,                         // Embedding 组件
+        MetricType:  entity.L2,                  // 距离度量：L2 欧氏距离
+    })
+    if err != nil {
+        return nil, err
+    }
+    return r, nil
+}
+```
+
+### 3.4.2 检索流程图
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Retriever 检索流程                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   用户查询 (Query)                                          │
+│        │                                                    │
+│        ▼                                                    │
+│   ┌──────────────┐                                          │
+│   │  Embedding   │  将查询文本转换为向量                     │
+│   │  (豆包 ARK)  │                                          │
+│   └──────┬───────┘                                          │
+│          │                                                  │
+│          ▼                                                  │
+│   ┌──────────────┐                                          │
+│   │   Milvus     │  向量相似度搜索                          │
+│   │  向量检索    │  TopK=1, MetricType=L2                   │
+│   └──────┬───────┘                                          │
+│          │                                                  │
+│          ▼                                                  │
+│   ┌──────────────┐                                          │
+│   │  Documents   │  返回最相似的文档列表                     │
+│   └──────────────┘                                          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## 3.5 ReAct Agent 实现
+
+ReAct (Reasoning + Acting) 是一种让 LLM 交替进行推理和行动的 Agent 模式。
+
+### 3.5.1 ReAct 工作原理
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ReAct Agent 工作循环                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                    推理循环                              │   │
+│   │                                                         │   │
+│   │   1. Thought (思考)                                     │   │
+│   │      │  分析当前状态，决定下一步行动                     │   │
+│   │      ▼                                                  │   │
+│   │   2. Action (行动)                                      │   │
+│   │      │  选择并调用工具                                   │   │
+│   │      ▼                                                  │   │
+│   │   3. Observation (观察)                                 │   │
+│   │      │  获取工具执行结果                                 │   │
+│   │      ▼                                                  │   │
+│   │   4. 判断是否需要继续                                    │   │
+│   │      │                                                  │   │
+│   │      ├──▶ 是 ──▶ 返回步骤 1                             │   │
+│   │      │                                                  │   │
+│   │      └──▶ 否 ──▶ 生成最终回复                           │   │
+│   │                                                         │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 3.5.2 ReAct Agent 配置代码
+
+基于 Eino 框架的 ReAct Agent 实现：
+
+```go
+import (
+    "github.com/cloudwego/eino/compose"
+    "github.com/cloudwego/eino/flow/agent/react"
+)
+
+func newReactAgentLambda(ctx context.Context) (lba *compose.Lambda, err error) {
+    config := &react.AgentConfig{
+        MaxStep:            25,                    // 最大推理步数
+        ToolReturnDirectly: map[string]struct{}{}, // 直接返回的工具
+    }
+
+    // 设置工具调用模型
+    chatModelIns, err := newChatModel(ctx)
+    if err != nil {
+        return nil, err
+    }
+    config.ToolCallingModel = chatModelIns
+
+    // 注册工具
+    config.ToolsConfig.Tools = append(config.ToolsConfig.Tools,
+        tools.NewPrometheusAlertsQueryTool(),  // Prometheus 告警查询
+        tools.NewMysqlCrudTool(),              // MySQL 数据库操作
+        tools.NewGetCurrentTimeTool(),         // 获取当前时间
+        tools.NewQueryInternalDocsTool(),      // 内部文档查询
+    )
+
+    // 创建 ReAct Agent 并包装为 Lambda
+    ins, err := react.NewAgent(ctx, config)
+    lba, err = compose.AnyLambda(ins.Generate, ins.Stream, nil, nil)
+    return lba, nil
+}
+```
+
+---
+
+# 第四章 知识库索引流水线详解
+
+## 4.1 Knowledge Index Pipeline 概述
+
+知识库索引流水线负责将文档转换为向量并存储到 Milvus，为 RAG 检索提供数据基础。
+
+### 4.1.1 流水线架构图
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              Knowledge Index Pipeline 架构                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   输入: document.Source (文件路径)                           │
+│        │                                                    │
+│        ▼                                                    │
+│   ┌──────────────┐                                          │
+│   │  FileLoader  │  加载文件内容                             │
+│   └──────┬───────┘                                          │
+│          │                                                  │
+│          ▼                                                  │
+│   ┌──────────────┐                                          │
+│   │  Markdown    │  按标题分割文档                           │
+│   │  Splitter    │                                          │
+│   └──────┬───────┘                                          │
+│          │                                                  │
+│          ▼                                                  │
+│   ┌──────────────┐                                          │
+│   │   Milvus     │  向量化并存储                             │
+│   │   Indexer    │                                          │
+│   └──────┬───────┘                                          │
+│          │                                                  │
+│          ▼                                                  │
+│   输出: []string (文档 ID 列表)                              │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## 4.2 Graph 编排实现
+
+**文件位置**: `internal/ai/agent/knowledge_index_pipeline/orchestration.go`
+
+```go
+package knowledge_index_pipeline
+
+import (
+    "context"
+    "github.com/cloudwego/eino/components/document"
+    "github.com/cloudwego/eino/compose"
+)
+
+func BuildKnowledgeIndexing(ctx context.Context) (r compose.Runnable[document.Source, []string], err error) {
+    const (
+        FileLoader       = "FileLoader"
+        MarkdownSplitter = "MarkdownSplitter"
+        MilvusIndexer    = "MilvusIndexer"
+    )
+
+    // 创建 Graph
+    g := compose.NewGraph[document.Source, []string]()
+
+    // 添加文件加载节点
+    fileLoaderKeyOfLoader, err := newLoader(ctx)
+    if err != nil {
+        return nil, err
+    }
+    _ = g.AddLoaderNode(FileLoader, fileLoaderKeyOfLoader)
+
+    // 添加 Markdown 分割节点
+    markdownSplitterKeyOfDocumentTransformer, err := newDocumentTransformer(ctx)
+    if err != nil {
+        return nil, err
+    }
+    _ = g.AddDocumentTransformerNode(MarkdownSplitter, markdownSplitterKeyOfDocumentTransformer)
+
+    // 添加 Milvus 索引节点
+    milvusIndexerKeyOfIndexer, err := newIndexer(ctx)
+    if err != nil {
+        return nil, err
+    }
+    _ = g.AddIndexerNode(MilvusIndexer, milvusIndexerKeyOfIndexer)
+
+    // 定义边
+    _ = g.AddEdge(compose.START, FileLoader)
+    _ = g.AddEdge(FileLoader, MarkdownSplitter)
+    _ = g.AddEdge(MarkdownSplitter, MilvusIndexer)
+    _ = g.AddEdge(MilvusIndexer, compose.END)
+
+    // 编译
+    r, err = g.Compile(ctx,
+        compose.WithGraphName("KnowledgeIndexing"),
+        compose.WithNodeTriggerMode(compose.AnyPredecessor))
+    return r, err
+}
+```
+
+## 4.3 FileLoader 组件
+
+**文件位置**: `internal/ai/agent/knowledge_index_pipeline/loader.go`
+
+```go
+package knowledge_index_pipeline
+
+import (
+    "context"
+    "github.com/cloudwego/eino-ext/components/document/loader/file"
+    "github.com/cloudwego/eino/components/document"
+)
+
+func newLoader(ctx context.Context) (ldr document.Loader, err error) {
+    config := &file.FileLoaderConfig{}
+    ldr, err = file.NewFileLoader(ctx, config)
+    if err != nil {
+        return nil, err
+    }
+    return ldr, nil
+}
+```
+
+## 4.4 Markdown Splitter 组件
+
+**文件位置**: `internal/ai/agent/knowledge_index_pipeline/transformer.go`
+
+```go
+package knowledge_index_pipeline
+
+import (
+    "context"
+    "github.com/cloudwego/eino-ext/components/document/transformer/splitter/markdown"
+    "github.com/cloudwego/eino/components/document"
+    "github.com/google/uuid"
+)
+
+func newDocumentTransformer(ctx context.Context) (tfr document.Transformer, err error) {
+    config := &markdown.HeaderConfig{
+        Headers: map[string]string{
+            "#": "title",  // 一级标题作为分割点
+        },
+        TrimHeaders: false,
+        IDGenerator: func(ctx context.Context, originalID string, splitIndex int) string {
+            return uuid.New().String()  // 为每个分割块生成唯一 ID
+        },
+    }
+    tfr, err = markdown.NewHeaderSplitter(ctx, config)
+    return tfr, nil
+}
+```
+
+## 4.5 Milvus Indexer 组件
+
+**文件位置**: `internal/ai/indexer/indexer.go`
+
+```go
+package indexer
+
+import (
+    embedder2 "Sentinel/internal/ai/embedder"
+    "Sentinel/utility/client"
+    "Sentinel/utility/common"
+    "context"
+    "github.com/cloudwego/eino-ext/components/indexer/milvus"
+    "github.com/milvus-io/milvus-sdk-go/v2/entity"
+)
+
+func NewMilvusIndexer(ctx context.Context) (*milvus.Indexer, error) {
+    cli, err := client.NewMilvusClient(ctx)
+    if err != nil {
+        return nil, err
+    }
+    eb, err := embedder2.DoubaoEmbedding(ctx)
+    if err != nil {
+        return nil, err
+    }
+    config := &milvus.IndexerConfig{
+        Client:     cli,
+        Collection: common.MilvusCollectionName,
+        Fields:     fields,
+        Embedding:  eb,
+    }
+    return milvus.NewIndexer(ctx, config)
+}
+```
+
+---
+
+# 第五章 Tool 工具系统详解
+
+## 5.1 Tool 系统概述
+
+Eino 的 Tool 系统允许 Agent 调用外部工具来完成特定任务。Sentinel 实现了多种业务工具。
+
+### 5.1.1 工具清单
+
+| 工具名称 | 文件位置 | 功能描述 |
+|---------|---------|---------|
+| query_prometheus_alerts | `tools/query_metrics_alerts.go` | 查询 Prometheus 告警 |
+| mysql_crud | `tools/mysql_crud.go` | MySQL 数据库操作 |
+| get_current_time | `tools/get_current_time.go` | 获取当前时间 |
+| query_internal_docs | `tools/query_internal_docs.go` | 内部文档检索 |
+| query_events | `tools/query_events.go` | 安全事件查询 |
+| query_subscriptions | `tools/query_subscriptions.go` | 订阅源查询 |
+| query_reports | `tools/query_reports.go` | 报告查询 |
+| MCP Tools | `tools/query_log.go` | MCP 协议日志工具 |
+
+## 5.2 Tool 实现模式
+
+Eino 提供两种 Tool 实现方式：
+
+### 5.2.1 方式一：实现 BaseTool 接口
+
+**文件位置**: `internal/ai/tools/query_events.go`
+
+```go
+package tools
+
+import (
+    "context"
+    "encoding/json"
+    "Sentinel/internal/database"
+    "github.com/cloudwego/eino/components/tool"
+    "github.com/cloudwego/eino/schema"
+)
+
+// 定义工具结构体
+type EventQueryTool struct{}
+
+// 工厂函数
+func NewEventQueryTool() tool.BaseTool {
+    return &EventQueryTool{}
+}
+
+// 实现 Info 方法：定义工具元信息
+func (t *EventQueryTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+    return &schema.ToolInfo{
+        Name: "query_events",
+        Desc: "查询安全事件列表，包括漏洞、威胁情报等安全事件",
+        ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+            "severity": {Type: schema.String, Desc: "按严重程度筛选"},
+            "status":   {Type: schema.String, Desc: "按状态筛选"},
+            "limit":    {Type: schema.Integer, Desc: "返回数量限制"},
+        }),
+    }, nil
+}
+
+// 实现 InvokableRun 方法：执行工具逻辑
+func (t *EventQueryTool) InvokableRun(ctx context.Context, args string, opts ...tool.Option) (string, error) {
+    var params struct {
+        Severity string `json:"severity"`
+        Status   string `json:"status"`
+        Limit    int    `json:"limit"`
+    }
+    json.Unmarshal([]byte(args), &params)
+
+    // 执行数据库查询
+    db := database.GetDB()
+    query := db.Table("security_events").Limit(params.Limit)
+    // ... 查询逻辑
+
+    data, _ := json.Marshal(results)
+    return string(data), nil
+}
+```
+
+### 5.2.2 方式二：使用 InferTool 自动推断
+
+**文件位置**: `internal/ai/tools/get_current_time.go`
+
+```go
+package tools
+
+import (
+    "context"
+    "encoding/json"
+    "time"
+    "github.com/cloudwego/eino/components/tool"
+    "github.com/cloudwego/eino/components/tool/utils"
+)
+
+// 定义输入结构体（使用 jsonschema 标签自动生成参数描述）
+type GetCurrentTimeInput struct{}
+
+// 定义输出结构体
+type GetCurrentTimeOutput struct {
+    Success      bool   `json:"success" jsonschema:"description=是否成功"`
+    Seconds      int64  `json:"seconds" jsonschema:"description=Unix时间戳(秒)"`
+    Milliseconds int64  `json:"milliseconds" jsonschema:"description=Unix时间戳(毫秒)"`
+    Timestamp    string `json:"timestamp" jsonschema:"description=可读时间格式"`
+}
+
+func NewGetCurrentTimeTool() tool.InvokableTool {
+    // 使用 InferOptionableTool 自动推断参数
+    t, _ := utils.InferOptionableTool(
+        "get_current_time",                    // 工具名称
+        "获取当前系统时间",                      // 工具描述
+        func(ctx context.Context, input *GetCurrentTimeInput, opts ...tool.Option) (string, error) {
+            now := time.Now()
+            output := GetCurrentTimeOutput{
+                Success:      true,
+                Seconds:      now.Unix(),
+                Milliseconds: now.UnixMilli(),
+                Timestamp:    now.Format("2006-01-02 15:04:05"),
+            }
+            jsonBytes, _ := json.MarshalIndent(output, "", "  ")
+            return string(jsonBytes), nil
+        })
+    return t
+}
+```
+
+## 5.3 MCP 协议工具集成
+
+**文件位置**: `internal/ai/tools/query_log.go`
+
+```go
+package tools
+
+import (
+    "context"
+    e_mcp "github.com/cloudwego/eino-ext/components/tool/mcp"
+    "github.com/cloudwego/eino/components/tool"
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
+func GetLogMcpTool() ([]tool.BaseTool, error) {
+    mcp_url := "https://mcp-api.tencent-cloud.com/sse/xxx"
+    ctx := context.Background()
+
+    // 创建 SSE MCP 客户端
+    cli, err := client.NewSSEMCPClient(mcp_url)
+    if err != nil {
+        return nil, err
+    }
+
+    // 启动客户端
+    cli.Start(ctx)
+
+    // 初始化 MCP 协议
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    cli.Initialize(ctx, initRequest)
+
+    // 获取 MCP 工具列表
+    mcpTools, _ := e_mcp.GetTools(ctx, &e_mcp.Config{Cli: cli})
+    return mcpTools, nil
+}
+```
+
+---
+
+# 第六章 模型与 Embedding 集成
+
+## 6.1 LLM 模型配置
+
+**文件位置**: `internal/ai/models/open_ai.go`
+
+```go
+package models
+
+import (
+    "context"
+    "github.com/cloudwego/eino-ext/components/model/openai"
+    "github.com/cloudwego/eino/components/model"
+    "github.com/gogf/gf/v2/frame/g"
+)
+
+// DeepSeek V3 Think 模型（用于深度推理）
+func OpenAIForDeepSeekV31Think(ctx context.Context) (model.ToolCallingChatModel, error) {
+    modelName, _ := g.Cfg().Get(ctx, "ds_think_chat_model.model")
+    apiKey, _ := g.Cfg().Get(ctx, "ds_think_chat_model.api_key")
+    baseURL, _ := g.Cfg().Get(ctx, "ds_think_chat_model.base_url")
+
+    config := &openai.ChatModelConfig{
+        Model:   modelName.String(),
+        APIKey:  apiKey.String(),
+        BaseURL: baseURL.String(),
+    }
+    return openai.NewChatModel(ctx, config)
+}
+
+// DeepSeek V3 Quick 模型（用于快速响应）
+func OpenAIForDeepSeekV3Quick(ctx context.Context) (model.ToolCallingChatModel, error) {
+    modelName, _ := g.Cfg().Get(ctx, "ds_quick_chat_model.model")
+    apiKey, _ := g.Cfg().Get(ctx, "ds_quick_chat_model.api_key")
+    baseURL, _ := g.Cfg().Get(ctx, "ds_quick_chat_model.base_url")
+
+    config := &openai.ChatModelConfig{
+        Model:   modelName.String(),
+        APIKey:  apiKey.String(),
+        BaseURL: baseURL.String(),
+    }
+    return openai.NewChatModel(ctx, config)
+}
+```
+
+## 6.2 Embedding 组件
+
+**文件位置**: `internal/ai/embedder/embedder.go`
+
+```go
+package embedder
+
+import (
+    "context"
+    "github.com/cloudwego/eino-ext/components/embedding/ark"
+    "github.com/cloudwego/eino/components/embedding"
+    "github.com/gogf/gf/v2/frame/g"
+)
+
+func DoubaoEmbedding(ctx context.Context) (embedding.Embedder, error) {
+    apiKey, _ := g.Cfg().Get(ctx, "doubao_embedding_model.api_key")
+    model, _ := g.Cfg().Get(ctx, "doubao_embedding_model.model")
+
+    apiType := ark.APITypeMultiModal
+    return ark.NewEmbedder(ctx, &ark.EmbeddingConfig{
+        APIKey:  apiKey.String(),
+        Model:   model.String(),
+        APIType: &apiType,
+    })
+}
+```
+
+---
+
+# 第七章 向量检索与存储系统
+
+本章详细描述 Sentinel 的向量存储与 RAG 检索体系，涵盖 Milvus 集群管理、Collection 设计、Embedding 生成、文档索引、语义检索的完整链路。
+
+## 7.1 整体架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    向量检索与存储系统                          │
+│                                                              │
+│  写入链路 (Indexing)                                         │
+│  ┌──────────┐   ┌──────────────┐   ┌──────────┐   ┌──────┐ │
+│  │FileLoader│──▶│MarkdownSplit │──▶│ Doubao   │──▶│Milvus│ │
+│  │/EventData│   │(按标题分块)   │   │Embedding │   │Index │ │
+│  └──────────┘   └──────────────┘   │(1024维)  │   └──────┘ │
+│                                     └──────────┘            │
+│  读取链路 (Retrieval)                                        │
+│  ┌──────────┐   ┌──────────────┐   ┌──────────┐   ┌──────┐ │
+│  │UserQuery │──▶│ Doubao       │──▶│ Milvus   │──▶│Top-K │ │
+│  │          │   │ Embedding    │   │ L2 Search│   │Docs  │ │
+│  └──────────┘   └──────────────┘   └──────────┘   └──────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## 7.2 Milvus 客户端初始化与自动建库
+
+**文件位置**: `utility/client/client.go`
+
+客户端采用自动初始化策略，首次连接时自动创建数据库和 Collection：
+
+```go
+func NewMilvusClient(ctx context.Context) (cli.Client, error) {
+    // 1. 先连接 default 数据库
+    defaultClient, err := cli.NewClient(ctx, cli.Config{
+        Address: "localhost:19530",
+        DBName:  "default",
+    })
+
+    // 2. 检查 agent 数据库是否存在，不存在则创建
+    databases, _ := defaultClient.ListDatabases(ctx)
+    agentDBExists := false
+    for _, db := range databases {
+        if db.Name == common.MilvusDBName {
+            agentDBExists = true
+            break
+        }
+    }
+    if !agentDBExists {
+        defaultClient.CreateDatabase(ctx, common.MilvusDBName)
+    }
+
+    // 3. 连接 agent 数据库
+    agentClient, _ := cli.NewClient(ctx, cli.Config{
+        Address: "localhost:19530",
+        DBName:  common.MilvusDBName,
+    })
+
+    // 4. 检查并创建 biz Collection（含索引和加载）
+    // ... 详见下节
+}
+```
+
+初始化流程：连接 default → 检查/创建 agent 库 → 连接 agent 库 → 检查/创建 biz Collection → 创建向量索引 → 加载 Collection 到内存。
+
+## 7.3 Collection Schema 设计
+
+**Collection 名称**: `biz`（业务知识集合）
+
+```go
+var fields = []*entity.Field{
+    {
+        Name:       "id",
+        DataType:   entity.FieldTypeVarChar,
+        TypeParams: map[string]string{"max_length": "256"},
+        PrimaryKey: true,
+    },
+    {
+        Name:       "vector",
+        DataType:   entity.FieldTypeFloatVector,
+        TypeParams: map[string]string{"dim": "1024"},  // 豆包 Embedding 维度
+    },
+    {
+        Name:       "content",
+        DataType:   entity.FieldTypeVarChar,
+        TypeParams: map[string]string{"max_length": "8192"},
+    },
+    {
+        Name:     "metadata",
+        DataType: entity.FieldTypeJSON,  // 动态元数据
+    },
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | VarChar(256) | 主键，UUID 生成 |
+| vector | FloatVector(1024) | 豆包 Embedding 向量 |
+| content | VarChar(8192) | 文档/事件文本内容 |
+| metadata | JSON | 动态元数据（类型、事件ID、严重级别等） |
+
+Schema 启用了 `EnableDynamicField: true`，支持灵活的元数据扩展。
+
+**向量索引配置**：
+
+```go
+// AUTOINDEX 自动选择最优索引类型，L2 欧氏距离度量
+vectorIndex, _ := entity.NewIndexAUTOINDEX(entity.L2)
+agentClient.CreateIndex(ctx, "biz", "vector", vectorIndex, false)
+agentClient.LoadCollection(ctx, "biz", false)  // 加载到内存
+```
+
+## 7.4 Embedding 生成
+
+**文件位置**: `internal/ai/embedder/embedder.go`
+
+所有流水线共享同一个 Embedding 组件，基于豆包（ByteDance ARK）多模态 Embedding 服务：
+
+```go
+func NewEmbedding(ctx context.Context) (embedding.Embedder, error) {
+    apiKey := g.Cfg().MustGet(ctx, "doubao_embedding_model.api_key").String()
+    modelName := g.Cfg().MustGet(ctx, "doubao_embedding_model.model").String()
+    return ark.NewEmbedder(ctx, &ark.EmbeddingConfig{
+        APIKey:  apiKey,
+        Model:   modelName,
+        APIType: ark.APITypeMultiModal,
+    })
+}
+```
+
+- **模型**: 豆包多模态 Embedding（ep-20260222183953-gv8q5）
+- **维度**: 1024 维浮点向量
+- **使用场景**: 知识库索引、事件索引、所有 Pipeline 的 RAG 检索
+
+## 7.5 文档索引流水线
+
+**文件位置**: `internal/ai/agent/knowledge_index_pipeline/`
+
+知识库索引采用 Eino Graph 编排，流程为：
+
+```
+START → FileLoader → MarkdownSplitter → MilvusIndexer → END
+```
+
+**文档分块策略**（`transformer.go`）：
+
+```go
+// 基于 Markdown 标题的分块
+markdown.NewHeaderSplitter(ctx, &markdown.HeaderSplitterConfig{
+    Headers: map[string]string{
+        "#": "title",  // 按一级标题分块
+    },
+    TrimHeaders: false,
+    IDGenerator: func(ctx context.Context, doc *schema.Document) string {
+        return uuid.New().String()  // 每个分块生成唯一 UUID
+    },
+})
+```
+
+- 按 Markdown 一级标题 `#` 切分文档
+- 每个分块保留标题层级上下文
+- 每个分块生成唯一 UUID 作为主键
+
+**事件索引**（`event_indexer/indexer.go`）：
+
+安全事件索引时，内容拼接多个字段并附带结构化元数据：
+
+```go
+content := fmt.Sprintf("标题: %s\nCVE: %s\n严重级别: %s\n厂商: %s\n产品: %s\n描述: %s\nAI分析: %s",
+    event.Title, event.CVEID, event.Severity, ...)
+// 内容截断到 7000 字符
+
+metadata := map[string]any{
+    "type":       "security_event",
+    "event_id":   event.ID,
+    "severity":   event.Severity,
+    "cve_id":     event.CVEID,
+    "risk_score": event.RiskScore,
+    "indexed_at": time.Now().Format(time.RFC3339),
+}
+```
+
+## 7.6 语义检索（Retriever）
+
+**文件位置**: `internal/ai/retriever/retriever.go`
+
+```go
+func NewRetriever(ctx context.Context) (retriever.Retriever, error) {
+    milvusClient, _ := client.NewMilvusClient(ctx)
+    emb, _ := embedder.NewEmbedding(ctx)
+
+    return milvus.NewRetriever(ctx, &milvus.RetrieverConfig{
+        Client:      milvusClient,
+        Collection:  common.MilvusCollectionName,  // "biz"
+        VectorField: "vector",
+        TopK:        3,
+        Embedding:   emb,
+        MetricType:  entity.L2,  // 欧氏距离
+    })
+}
+```
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| Collection | biz | 业务知识集合 |
+| VectorField | vector | 向量字段名 |
+| TopK | 3 | 返回最相似的 3 条文档 |
+| MetricType | L2 | 欧氏距离（值越小越相似） |
+
+## 7.7 RAG 在 Pipeline 中的集成
+
+每个 Agent Pipeline（Chat/Event/Report/Risk）都采用相同的 RAG 模式，以 Chat Pipeline 为例：
+
+```
+START ──┬──▶ InputToRag ──▶ MilvusRetriever ──┐
+        │                                      ├──▶ ChatTemplate ──▶ ReactAgent ──▶ END
+        └──▶ InputToChat ─────────────────────┘
+```
+
+关键设计：
+- **并行分支**: `InputToRag` 和 `InputToChat` 从 START 并行执行
+- **AllPredecessor 触发**: ChatTemplate 等待两个前驱节点都完成后才执行
+- **OutputKey 映射**: MilvusRetriever 的输出 key 设为 `"documents"`，与 ChatTemplate 中的 `{documents}` 占位符对应
+
+检索结果注入到系统 Prompt 中：
+
+```
+<related_docs>
+{documents}
+</related_docs>
+```
+
+## 7.8 相似事件搜索工具
+
+**文件位置**: `internal/ai/tools/search_similar_events.go`
+
+除了 Pipeline 内置的 RAG 检索，系统还提供了 `SearchSimilarEvents` 工具供 Agent 主动调用：
+
+```go
+// 输入参数
+type SearchSimilarEventsInput struct {
+    Query string `json:"query"`  // 搜索查询
+    Limit int    `json:"limit"`  // 最大结果数（1-5，默认3）
+}
+```
+
+该工具初始化独立的 MilvusRetriever，执行语义搜索后返回文档内容、元数据和相似度分数。Agent 可在 ReAct 推理过程中按需调用此工具进行知识检索。
+
+---
+
+# 第八章 Multi-Agent Supervisor 多智能体架构
+
+本章详细描述 Sentinel 的多智能体协作架构。系统采用 Supervisor（主管）模式，由一个 Host Agent 负责意图识别和任务分发，将请求路由到 5 个专业化的 Sub-Agent 执行。
+
+## 8.1 架构概览
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                   Supervisor (Host Agent)                  │
+│                                                            │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │              SupervisorGraph (Eino Compose)         │   │
+│  │                                                      │   │
+│  │  START                                               │   │
+│  │    │                                                 │   │
+│  │    ▼                                                 │   │
+│  │  ┌──────────────────────────────────┐               │   │
+│  │  │  Router (LLM 意图分类)            │               │   │
+│  │  │  DeepSeek V3 Quick → JSON输出     │               │   │
+│  │  └──────────────┬───────────────────┘               │   │
+│  │                 │                                    │   │
+│  │                 ▼                                    │   │
+│  │  ┌──────────────────────────────────┐               │   │
+│  │  │  Executor (Agent 分发执行)        │               │   │
+│  │  │  Registry 查找 → SubAgent.Execute │               │   │
+│  │  └──────────────┬───────────────────┘               │   │
+│  │                 │                                    │   │
+│  │                 ▼                                    │   │
+│  │               END                                    │   │
+│  └────────────────────────────────────────────────────┘   │
+│                                                            │
+│  SharedMemory (分层上下文管理)                              │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │ messages[] + summary + context{} + 自动压缩         │   │
+│  └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
+         │
+    ┌────┴────┬────────┬────────┬────────┐
+    ▼         ▼        ▼        ▼        ▼
+┌────────┐┌──────┐┌──────┐┌─────┐┌──────┐
+│  Chat  ││Event ││Report││Risk ││ Plan │
+│ Agent  ││Agent ││Agent ││Agent││Agent │
+│RAG+    ││RAG+  ││RAG+  ││RAG+ ││PER   │
+│ReAct   ││ReAct ││ReAct ││ReAct││模式  │
+└────────┘└──────┘└──────┘└─────┘└──────┘
+```
+
+## 8.2 Agent 类型定义与注册
+
+**文件位置**: `internal/ai/agent/supervisor/types.go`
+
+系统定义了 5 种专业化 Agent 类型：
+
+```go
+type AgentType string
+
+const (
+    AgentChat   AgentType = "chat"    // 通用对话、安全咨询、知识问答
+    AgentEvent  AgentType = "event"   // 安全事件查询、事件分析、关联分析
+    AgentReport AgentType = "report"  // 报告生成、报告查看、数据分析
+    AgentRisk   AgentType = "risk"    // 风险评估、威胁分析、CVE 评估
+    AgentPlan   AgentType = "plan"    // 复杂多步骤任务、需要规划的操作
+)
+```
+
+每个 Agent 实现统一的 `SubAgent` 接口：
+
+```go
+// SubAgent 接口 - 所有子 Agent 必须实现
+type SubAgent interface {
+    Name() AgentType
+    Execute(ctx context.Context, task *Task, cb StreamCallback) (*Result, error)
+}
+```
+
+**Agent 注册表**（`registry.go`）采用线程安全的全局注册模式：
+
+```go
+var (
+    agents  = make(map[AgentType]SubAgent)
+    agentMu sync.RWMutex
+)
+
+func RegisterAgent(agent SubAgent) {
+    agentMu.Lock()
+    defer agentMu.Unlock()
+    agents[agent.Name()] = agent
+}
+
+func GetAgent(t AgentType) SubAgent {
+    agentMu.RLock()
+    defer agentMu.RUnlock()
+    return agents[t]
+}
+```
+
+## 8.3 SupervisorGraph 编排
+
+**文件位置**: `internal/ai/agent/supervisor/orchestration.go`
+
+Supervisor 的核心编排使用 Eino Compose Graph，定义了两个节点的线性流程：
+
+```go
+func BuildSupervisorGraph(ctx context.Context) (compose.Runnable[*SupervisorInput, *SupervisorOutput], error) {
+    g := compose.NewGraph[*SupervisorInput, *SupervisorOutput]()
+
+    // 节点1: Router - LLM 意图分类
+    routerLambda, _ := newRouterLambda(ctx)
+    g.AddLambdaNode(NodeRouter, routerLambda, compose.WithNodeName("IntentRouter"))
+
+    // 节点2: Executor - 执行对应的 SubAgent
+    executorLambda := newExecutorLambda()
+    g.AddLambdaNode(NodeExecutor, executorLambda, compose.WithNodeName("AgentExecutor"))
+
+    // 连接: START → Router → Executor → END
+    g.AddEdge(compose.START, NodeRouter)
+    g.AddEdge(NodeRouter, NodeExecutor)
+    g.AddEdge(NodeExecutor, compose.END)
+
+    return g.Compile(ctx, compose.WithGraphName("SupervisorGraph"))
+}
+```
+
+## 8.4 Router 意图路由
+
+**文件位置**: `internal/ai/agent/supervisor/router.go`
+
+Router 使用 DeepSeek V3 Quick（轻量快速模型）进行意图分类，输出 JSON 格式的路由结果：
+
+```go
+func classifyIntent(ctx context.Context, m model.ToolCallingChatModel, query string) (AgentType, error) {
+    prompt := buildClassifyPrompt(query)
+    resp, _ := m.Generate(ctx, []*schema.Message{schema.UserMessage(prompt)})
+    return parseAgentType(resp.Content), nil
+}
+```
+
+分类 Prompt 包含明确的 Agent 职责描述和示例：
+
+```
+<agents>
+- chat: 通用对话、安全咨询、知识问答、日志查询、订阅管理（默认选项）
+- event: 安全事件查询、事件分析、事件关联、告警关联
+- report: 生成报告、查看报告、报告数据分析
+- risk: 风险评估、威胁分析、漏洞评估、CVE分析
+- plan: 复杂多步骤任务、需要规划的操作
+</agents>
+
+<examples>
+"最近有什么安全事件" → event
+"帮我生成本周安全报告" → report
+"评估这个CVE的风险" → risk
+"帮我部署一套监控系统" → plan
+"查一下日志" → chat
+</examples>
+```
+
+**降级策略**: 分类失败时自动降级到 `AgentChat`，确保系统始终可用。
+
+## 8.5 Executor 任务执行
+
+**文件位置**: `internal/ai/agent/supervisor/executor.go`
+
+Executor 从 Registry 查找对应的 SubAgent 并执行：
+
+```go
+func newExecutorLambda() *compose.Lambda {
+    return compose.InvokableLambda(func(ctx context.Context, input *RouterOutput) (*SupervisorOutput, error) {
+        agent := GetAgent(input.AgentType)
+        if agent == nil {
+            agent = GetAgent(AgentChat)  // 兜底到 Chat Agent
+        }
+
+        task := &Task{
+            ID:    generateTaskID(),  // 原子计数器生成 task_1, task_2, ...
+            Query: input.Input.Query,
+            Type:  input.AgentType,
+        }
+
+        result, err := agent.Execute(ctx, task, input.Input.Callback)
+        // 错误不中断 Graph，返回 nil error 让流程继续
+        return &SupervisorOutput{...}, nil
+    })
+}
+```
+
+关键设计：
+- **双重兜底**: Agent 未找到时降级到 Chat Agent
+- **错误隔离**: SubAgent 执行错误不会中断 Graph 流程
+- **流式回调**: 通过 `StreamCallback` 实时推送执行进度
+
+## 8.6 SharedMemory 分层上下文管理
+
+**文件位置**: `internal/ai/agent/supervisor/memory.go`
+
+SharedMemory 实现了跨 Agent 的上下文共享和自动压缩机制：
+
+```go
+type SharedMemory struct {
+    mu            sync.RWMutex
+    messages      []*MessageMeta   // 消息列表（带元数据）
+    context       map[string]any   // 键值上下文
+    summary       string           // 历史对话摘要
+    maxTokens     int              // 最大 token 数（4000）
+    summaryTokens int              // 摘要占用的 token 数
+}
+
+type MessageMeta struct {
+    Message   *schema.Message
+    Timestamp time.Time
+    Tokens    int       // 估算 token 数（字符数/3）
+    Important bool      // 工具调用结果标记为重要
+    Tags      []string  // tool_call, tool_result, query, answer
+}
+```
+
+**自动压缩策略**（`compressIfNeeded`）：
+
+当总 token 数超过 4000 限制时触发压缩：
+1. 从后往前保留最近 10 条消息
+2. 标记为 `Important` 的消息（工具调用结果）始终保留
+3. 超出范围的旧消息生成文本摘要
+4. 摘要格式：`[历史摘要] 用户问: xxx; 回答: xxx; ...`
+
+```go
+func (m *SharedMemory) compressIfNeeded() {
+    // 计算总 token
+    totalTokens := m.summaryTokens
+    for _, meta := range m.messages {
+        totalTokens += meta.Tokens
+    }
+    if totalTokens <= m.maxTokens { return }
+
+    // 保留最近 10 条 + 所有重要消息，其余压缩为摘要
+    // ...
+}
+```
+
+## 8.7 Supervisor 主入口
+
+**文件位置**: `internal/ai/agent/supervisor/supervisor.go`
+
+```go
+type Supervisor struct {
+    ctx    context.Context
+    memory *SharedMemory
+}
+
+func (s *Supervisor) Execute(query string, cb StreamCallback) (*Result, error) {
+    // 1. 记录用户消息到 SharedMemory
+    s.memory.AddMessage(schema.UserMessage(query))
+
+    // 2. 构建并执行 SupervisorGraph
+    graph, _ := BuildSupervisorGraph(s.ctx)
+    output, _ := graph.Invoke(s.ctx, &SupervisorInput{Query: query, Callback: cb})
+
+    // 3. 记录 Agent 回复到 SharedMemory
+    if output.Content != "" {
+        s.memory.AddMessage(schema.AssistantMessage(output.Content, nil))
+    }
+
+    return &Result{TaskID: output.TaskID, Agent: output.Agent, Content: output.Content}, nil
+}
+```
+
+完整的请求处理流程：用户消息 → SharedMemory 记录 → Router 意图分类 → Executor 分发到 SubAgent → SubAgent 执行（RAG + ReAct）→ 结果写回 SharedMemory → 返回响应。
+
+## 8.8 各 SubAgent 实现
+
+5 个 SubAgent 分别在 `agent_chat.go`、`agent_event.go`、`agent_report.go`、`agent_risk.go`、`agent_plan.go` 中实现。
+
+| Agent | 构建函数 | 内部架构 | 职责 |
+|-------|---------|---------|------|
+| ChatAgent | `BuildChatAgent()` | RAG + ReAct | 通用对话、知识问答、日志查询 |
+| EventAgent | `BuildEventAnalysisAgent()` | RAG + ReAct | 安全事件分析、关联分析 |
+| ReportAgent | `BuildReportAgent()` | RAG + ReAct | 报告生成与数据分析 |
+| RiskAgent | `BuildRiskAgent()` | RAG + ReAct | 风险评估、CVE 分析 |
+| PlanAgent | `BuildPlanAgent()` | Plan-Execute-Replan | 复杂多步骤任务规划与执行 |
+
+前 4 个 Agent 共享相同的 Pipeline 模式（RAG + ReAct），区别在于各自的系统 Prompt 和可用工具集。PlanAgent 使用独立的 Plan-Execute-Replan 模式（详见第九章）。
+
+---
+
+# 第九章 Plan-Execute-Replan 模式
+
+## 9.1 模式概述
+
+Plan-Execute-Replan（PER）是基于 Eino ADK 预构建的高级 Agent 模式，专门处理需要多步骤规划的复杂任务。该模式将任务分解为计划、执行、重规划三个阶段，支持最多 20 次迭代循环。
+
+```
+┌─────────────────────────────────────────────────────────┐
+│            Plan-Execute-Replan 工作流程                  │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│   ┌──────────────┐  ┌──────────────┐  ┌────────────┐   │
+│   │   Planner    │─▶│   Executor   │─▶│ Replanner  │   │
+│   │ DeepSeek V3  │  │ DeepSeek V3  │  │ DeepSeek V3│   │
+│   │   Think      │  │   Quick      │  │   Think    │   │
+│   │ (深度推理)    │  │ (快速执行)    │  │ (重新规划) │   │
+│   └──────────────┘  └──────┬───────┘  └─────┬──────┘   │
+│        ▲                   │                │           │
+│        └───────────────────┴────────────────┘           │
+│              (最多 20 次迭代循环)                        │
+│                                                         │
+│   Executor 可用工具:                                    │
+│   Log(MCP) │ Prometheus │ InternalDocs │ CurrentTime    │
+└─────────────────────────────────────────────────────────┘
+```
+
+## 9.2 核心实现
+
+**文件位置**: `internal/ai/agent/plan_execute_replan/plan_execute_replan.go`
+
+```go
+package plan_execute_replan
+
+import (
+    "context"
+    "github.com/cloudwego/eino/adk"
+    "github.com/cloudwego/eino/adk/prebuilt/planexecute"
+)
+
+func BuildPlanAgent(ctx context.Context, query string) (string, []string, error) {
+    // 创建三个子 Agent
+    planAgent, _ := NewPlanner(ctx)
+    executeAgent, _ := NewExecutor(ctx)
+    replanAgent, _ := NewRePlanAgent(ctx)
+
+    // 组装 Plan-Execute-Replan Agent
+    planExecuteAgent, _ := planexecute.New(ctx, &planexecute.Config{
+        Planner:       planAgent,
+        Executor:      executeAgent,
+        Replanner:     replanAgent,
+        MaxIterations: 20,
+    })
+
+    // 创建 Runner 并执行
+    r := adk.NewRunner(ctx, adk.RunnerConfig{Agent: planExecuteAgent})
+    iter := r.Query(ctx, query)
+
+    // 迭代获取结果
+    var lastMessage adk.Message
+    for {
+        event, ok := iter.Next()
+        if !ok { break }
+        if event.Output != nil {
+            lastMessage, _, _ = adk.GetMessage(event)
+        }
+    }
+    return lastMessage.Content, nil, nil
+}
+```
+
+## 9.3 Planner 规划器
+
+**文件位置**: `internal/ai/agent/plan_execute_replan/planner.go`
+
+```go
+func NewPlanner(ctx context.Context) (adk.Agent, error) {
+    planModel, _ := models.OpenAIForDeepSeekV31Think(ctx)
+    return planexecute.NewPlanner(ctx, &planexecute.PlannerConfig{
+        ToolCallingChatModel: planModel,
+    })
+}
+```
+
+## 9.4 Executor 执行器
+
+**文件位置**: `internal/ai/agent/plan_execute_replan/executor.go`
+
+Executor 使用 DeepSeek V3 Quick（快速模型）执行具体步骤，配备 4 类工具：
+
+```go
+func NewExecutor(ctx context.Context) (adk.Agent, error) {
+    // MCP 协议日志查询工具
+    mcpTool, _ := tools.GetLogMcpTool()
+    toolList := mcpTool
+    // Prometheus 告警查询
+    toolList = append(toolList, tools.NewPrometheusAlertsQueryTool())
+    // 内部文档查询
+    toolList = append(toolList, tools.NewQueryInternalDocsTool())
+    // 当前时间
+    toolList = append(toolList, tools.NewGetCurrentTimeTool())
+
+    execModel, _ := models.OpenAIForDeepSeekV3Quick(ctx)
+    return planexecute.NewExecutor(ctx, &planexecute.ExecutorConfig{
+        Model:         execModel,
+        ToolsConfig:   adk.ToolsConfig{
+            ToolsNodeConfig: compose.ToolsNodeConfig{Tools: toolList},
+        },
+        MaxIterations: 999999,  // 单步骤内不限制工具调用次数
+    })
+}
+```
+
+## 9.5 Replanner 重规划器
+
+**文件位置**: `internal/ai/agent/plan_execute_replan/replan.go`
+
+```go
+func NewRePlanAgent(ctx context.Context) (adk.Agent, error) {
+    model, _ := models.OpenAIForDeepSeekV31Think(ctx)
+    return planexecute.NewReplanner(ctx, &planexecute.ReplannerConfig{
+        ChatModel: model,  // 使用 Think 模型进行深度推理
+    })
+}
+```
+
+**模型选择策略**：
+
+| 组件 | 模型 | 原因 |
+|------|------|------|
+| Planner | DeepSeek V3 Think | 需要深度推理能力来制定计划 |
+| Executor | DeepSeek V3 Quick | 执行具体步骤，需要快速响应 |
+| Replanner | DeepSeek V3 Think | 需要分析执行结果并重新规划 |
+
+---
+
+# 第十章 Skill 技能系统
+
+## 10.1 概述
+
+Skill 技能系统是 Sentinel 的预定义任务执行框架，将常见的安全运维操作封装为可参数化的技能单元。每个 Skill 内部使用 ReAct Agent 驱动，配备特定的工具集和 Prompt 模板。
+
+```
+┌─────────────────────────────────────────────┐
+│              Skill 技能系统                   │
+│                                              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+│  │事件分析   │  │日志诊断   │  │威胁狩猎   │  │
+│  │event_    │  │log_      │  │threat_   │  │
+│  │analysis  │  │diagnosis │  │hunting   │  │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  │
+│       │              │              │        │
+│       ▼              ▼              ▼        │
+│  ┌──────────────────────────────────────┐   │
+│  │         Executor (ReAct Agent)        │   │
+│  │  Prompt模板 + 参数替换 + 工具选择     │   │
+│  └──────────────────────────────────────┘   │
+└─────────────────────────────────────────────┘
+```
+
+## 10.2 Skill 定义
+
+**文件位置**: `internal/ai/skills/types.go`
+
+```go
+type Skill struct {
+    ID          string       `json:"id"`
+    Name        string       `json:"name"`
+    Description string       `json:"description"`
+    Category    string       `json:"category"`
+    Enabled     bool         `json:"enabled"`
+    Tools       []string     `json:"tools"`       // 可用工具名列表
+    Prompt      string       `json:"-"`            // Prompt 模板（含参数占位符）
+    Params      []SkillParam `json:"params"`       // 参数定义
+}
+```
+
+---
+
+# 第十一章 API 层与服务集成
+
+## 11.1 API 定义
+
+**文件位置**: `api/chat/v1/chat.go`
+
+```go
+type ChatReq struct {
+    g.Meta   `path:"/chat" method:"post"`
+    Id       string
+    Question string
+}
+
+type ChatRes struct {
+    Answer string `json:"answer"`
+}
+```
+
+## 11.2 Controller 实现
+
+**文件位置**: `internal/controller/chat/chat_v1_chat.go`
+
+```go
+func (c *ControllerV1) Chat(ctx context.Context, req *v1.ChatReq) (*v1.ChatRes, error) {
+    userMessage := &chat_pipeline.UserMessage{
+        ID:      req.Id,
+        Query:   req.Question,
+        History: mem.GetSimpleMemory(req.Id).GetMessages(),
+    }
+
+    runner, _ := chat_pipeline.BuildChatAgent(ctx)
+    out, _ := runner.Invoke(ctx, userMessage, compose.WithCallbacks(log_call_back.LogCallback(nil)))
+
+    // 保存对话历史
+    mem.GetSimpleMemory(req.Id).SetMessages(schema.UserMessage(req.Question))
+    mem.GetSimpleMemory(req.Id).SetMessages(schema.SystemMessage(out.Content))
+
+    return &v1.ChatRes{Answer: out.Content}, nil
+}
+```
+
+## 11.3 会话记忆管理
+
+**文件位置**: `utility/mem/mem.go`
+
+```go
+type SimpleMemory struct {
+    ID            string
+    Messages      []*schema.Message
+    MaxWindowSize int
+}
+
+func (c *SimpleMemory) SetMessages(msg *schema.Message) {
+    c.Messages = append(c.Messages, msg)
+    if len(c.Messages) > c.MaxWindowSize {
+        excess := len(c.Messages) - c.MaxWindowSize
+        if excess%2 != 0 { excess++ }
+        c.Messages = c.Messages[excess:]
+    }
+}
+```
+
+---
+
+# 第十二章 系统优化与工程实践
+
+## 12.1 多模型分级调度
+
+系统根据任务复杂度选择不同的模型，平衡推理质量与响应速度：
+
+| 场景 | 模型 | 特点 |
+|------|------|------|
+| 意图路由（Router） | DeepSeek V3 Quick | 轻量快速，毫秒级分类 |
+| 对话/事件/报告/风险 Agent | DeepSeek V3 | 通用推理，工具调用 |
+| 计划制定（Planner） | DeepSeek V3 Think | 深度推理，复杂规划 |
+| 重规划（Replanner） | DeepSeek V3 Think | 分析执行结果，调整策略 |
+| 步骤执行（PER Executor） | DeepSeek V3 Quick | 快速执行具体操作 |
+| Skill 执行 | DeepSeek V3 Quick | 预定义任务快速完成 |
+
+这种分级策略避免了对所有任务使用同一模型的浪费，Think 模型仅用于需要深度推理的规划场景。
+
+## 12.2 并行 Graph 执行优化
+
+Chat Pipeline 采用并行分支设计，RAG 检索与用户输入处理同时进行：
+
+```
+START ──┬──▶ InputToRag ──▶ MilvusRetriever ──┐
+        │                                      ├──▶ ChatTemplate ──▶ ReactAgent
+        └──▶ InputToChat ─────────────────────┘
+```
+
+关键优化点：
+- `InputToRag` 和 `InputToChat` 从 START 并行执行，不互相阻塞
+- `compose.WithNodeTriggerMode(compose.AllPredecessor)` 确保 ChatTemplate 等待两个前驱都完成
+- 向量检索与输入预处理的延迟被并行化隐藏
+
+## 12.3 SharedMemory 自动压缩
+
+Supervisor 的 SharedMemory 实现了智能的上下文管理：
+
+- **Token 预算控制**: 最大 4000 tokens，超出自动触发压缩
+- **重要性标记**: 工具调用结果（`tool_call`/`tool_result`）标记为 Important，压缩时优先保留
+- **滑动窗口**: 保留最近 10 条消息 + 所有重要消息
+- **摘要生成**: 超出窗口的旧消息自动生成文本摘要，保留关键信息
+- **线程安全**: RWMutex 保护，支持多 Agent 并发读写
+
+## 12.4 错误隔离与降级策略
+
+系统在多个层面实现了容错：
+
+- **Router 降级**: 意图分类失败时自动降级到 ChatAgent（默认 Agent）
+- **Executor 兜底**: Agent 未找到时降级到 ChatAgent
+- **错误不中断 Graph**: SubAgent 执行错误返回 `nil error`，Graph 流程继续执行
+- **Milvus 自动初始化**: 数据库/Collection 不存在时自动创建，无需手动建表
+
+## 12.5 向量库自动化管理
+
+Milvus 客户端实现了完整的自动化初始化链路：
+
+1. 连接 default 数据库 → 检查 agent 库是否存在
+2. 不存在则自动创建 agent 数据库
+3. 连接 agent 库 → 检查 biz Collection 是否存在
+4. 不存在则自动创建 Schema + AUTOINDEX 索引 + 加载到内存
+5. 关闭 default 连接，返回 agent 客户端
+
+这种设计使得系统首次部署时无需任何手动数据库操作。
+
+## 12.6 事件索引优化
+
+安全事件索引时的优化措施：
+
+- **内容拼接**: 将标题、CVE、严重级别、厂商、产品、描述、AI 分析等多字段拼接为单一文本
+- **长度截断**: 内容截断到 7000 字符，避免超出 Milvus VarChar 8192 限制
+- **结构化元数据**: 事件 ID、严重级别、CVE ID、风险评分等存入 JSON metadata 字段
+- **时间戳记录**: `indexed_at` 字段记录索引时间，支持时间范围过滤
+
+## 12.7 Skill 工具选择优化
+
+Skill 执行器根据技能定义动态选择工具子集，而非加载全部工具：
+
+```go
+func (e *Executor) selectTools() []tool.BaseTool {
+    // 从全局工具映射中按 Skill 定义的 Tools 列表选择
+    for _, name := range e.skill.Tools {
+        if t, ok := toolMap[name]; ok {
+            selected = append(selected, t)
+        }
+    }
+    return selected
+}
+```
+
+这减少了 Agent 的工具选择空间，提高了工具调用的准确率。
+
+---
+
+# 第十三章 配置管理与部署
+
+## 13.1 配置结构
+
+```yaml
+# config.yaml
+ds_think_chat_model:
+  model: "deepseek-chat"
+  api_key: "your-api-key"
+  base_url: "https://api.deepseek.com"
+
+ds_quick_chat_model:
+  model: "deepseek-chat"
+  api_key: "your-api-key"
+  base_url: "https://api.deepseek.com"
+
+doubao_embedding_model:
+  api_key: "your-ark-api-key"
+  model: "doubao-embedding"
+```
+
+## 13.2 部署架构
+
+```
+┌─────────────────────────────────────────┐
+│           部署架构                       │
+├─────────────────────────────────────────┤
+│                                         │
+│   ┌─────────────┐   ┌─────────────┐    │
+│   │Sentinel│   │   Milvus    │    │
+│   │   :8080     │   │   :19530    │    │
+│   └─────────────┘   └─────────────┘    │
+│          │                │             │
+│          └────────────────┘             │
+│                                         │
+│   ┌─────────────┐   ┌─────────────┐    │
+│   │   MySQL     │   │ Prometheus  │    │
+│   │   :3306     │   │   :9090     │    │
+│   └─────────────┘   └─────────────┘    │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+---
+
+# 附录：关键文件索引
+
+| 文件路径 | 功能描述 |
+|---------|---------|
+| `internal/ai/agent/chat_pipeline/orchestration.go` | Chat Agent 编排 |
+| `internal/ai/agent/knowledge_index_pipeline/orchestration.go` | 知识索引编排 |
+| `internal/ai/agent/plan_execute_replan/plan_execute_replan.go` | Plan-Execute 模式 |
+| `internal/ai/models/open_ai.go` | LLM 模型配置 |
+| `internal/ai/embedder/embedder.go` | Embedding 配置 |
+| `internal/ai/retriever/retriever.go` | 向量检索器 |
+| `internal/ai/indexer/indexer.go` | 向量索引器 |
+| `internal/ai/tools/*.go` | 工具实现 |
+| `utility/client/client.go` | Milvus 客户端 |
+| `utility/mem/mem.go` | 会话记忆 |
+
+---
+
+

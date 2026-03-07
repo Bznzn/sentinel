@@ -1,0 +1,15 @@
+# IDE
+.idea/
+
+# Docker volumes
+manifest/docker/volumes/
+
+# Node modules
+web/node_modules/
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
