@@ -18,7 +18,7 @@ func NewEventService() *EventService {
 func (s *EventService) Get(ctx context.Context, id uint) (*model.SecurityEvent, error) {
 	db := database.GetDB()
 	var event model.SecurityEvent
-	err := db.First(&event, id).Error
+	err := db.Preload("Subscription").First(&event, id).Error
 	return &event, err
 }
 
@@ -28,7 +28,7 @@ func (s *EventService) List(ctx context.Context, page, pageSize int, severity, s
 	var events []model.SecurityEvent
 	var total int64
 
-	query := db.Model(&model.SecurityEvent{})
+	query := db.Model(&model.SecurityEvent{}).Preload("Subscription")
 
 	if severity != "" {
 		query = query.Where("severity = ?", severity)

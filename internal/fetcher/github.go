@@ -47,6 +47,11 @@ func generateHash(source, id string) string {
 
 // Fetch 抓取 GitHub 仓库事件
 func (f *GitHubFetcher) Fetch(ctx context.Context, sub *model.Subscription) ([]model.SecurityEvent, error) {
+	// 判断是否为全局 API
+	if strings.Contains(sub.SourceURL, "api.github.com/advisories") {
+		return f.fetchGlobalAdvisories(ctx, sub)
+	}
+
 	owner, repo, err := parseRepoURL(sub.SourceURL)
 	if err != nil {
 		return nil, err
@@ -128,6 +133,32 @@ func (f *GitHubFetcher) fetchAdvisories(ctx context.Context, sub *model.Subscrip
 			CVEID:          a.CVEID,
 			EventTime:      a.PublishedAt,
 			UniqueHash:     generateHash("github-advisory", a.GHSAID),
+			CreatedAt:      time.Now(),
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
+
+// fetchGlobalAdvisories 抓取全局安全公告
+func (f *GitHubFetcher) fetchGlobalAdvisories(ctx context.Context, sub *model.Subscription) ([]model.SecurityEvent, error) {
+	advisories, err := f.client.GetGlobalAdvisories(ctx, 100)
+	if err != nil {
+		return nil, err
+	}
+
+	var events []model.SecurityEvent
+	for _, a := range advisories {
+		severity := mapGitHubSeverity(a.Severity)
+		event := model.SecurityEvent{
+			SubscriptionID: sub.ID,
+			Title:          fmt.Sprintf("[Security] %s", a.Summary),
+			Description:    a.Description,
+			SourceURL:      a.HTMLURL,
+			Severity:       severity,
+			CVEID:          a.CVEID,
+			EventTime:      a.PublishedAt,
+			UniqueHash:     generateHash("github-global", a.GHSAID),
 			CreatedAt:      time.Now(),
 		}
 		events = append(events, event)

@@ -74,6 +74,7 @@ export interface SecurityEvent {
   status: EventStatus
   source: string
   source_url: string
+  sub_script_url?: string
   event_time: string
   raw_data?: string
   cve_id?: string
@@ -86,6 +87,7 @@ export interface SecurityEvent {
   risk_score?: number
   recommendation?: string
   affected_assets?: number
+  solution?: string
   created_at: string
   updated_at?: string
 }

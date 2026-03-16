@@ -6,6 +6,7 @@ import (
 	v1 "SuperBizAgent/api/subscription/v1"
 	"SuperBizAgent/internal/logic/subscription"
 	"SuperBizAgent/internal/model"
+	"SuperBizAgent/internal/service"
 )
 
 // Create 创建订阅
@@ -25,6 +26,9 @@ func (c *ControllerV1) Create(ctx context.Context, req *v1.CreateReq) (*v1.Creat
 	if err := svc.Create(ctx, sub); err != nil {
 		return nil, err
 	}
+
+	// 添加到调度器
+	service.AddSubscriptionToScheduler(sub)
 
 	return &v1.CreateRes{ID: sub.ID}, nil
 }

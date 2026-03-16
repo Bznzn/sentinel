@@ -41,10 +41,11 @@ type nvdVuln struct {
 }
 
 type nvdCVE struct {
-	ID           string           `json:"id"`
-	Published    string           `json:"published"`
-	Description  []nvdDescription `json:"descriptions"`
-	Metrics      nvdMetrics       `json:"metrics"`
+	ID             string             `json:"id"`
+	Published      string             `json:"published"`
+	Description    []nvdDescription   `json:"descriptions"`
+	Metrics        nvdMetrics         `json:"metrics"`
+	Configurations []nvdConfiguration `json:"configurations"`
 }
 
 type nvdDescription struct {
@@ -62,6 +63,21 @@ type nvdCVSS struct {
 
 type nvdCVSSData struct {
 	BaseScore float64 `json:"baseScore"`
+}
+
+type nvdConfiguration struct {
+	Nodes []nvdNode `json:"nodes"`
+}
+
+type nvdNode struct {
+	CpeMatch []nvdCPEMatch `json:"cpeMatch"`
+}
+
+type nvdCPEMatch struct {
+	Criteria              string `json:"criteria"`
+	VersionStartIncluding string `json:"versionStartIncluding"`
+	VersionEndExcluding   string `json:"versionEndExcluding"`
+	VersionEndIncluding   string `json:"versionEndIncluding"`
 }
 
 // Fetch 抓取 NVD 漏洞数据
@@ -96,8 +112,11 @@ func (f *NVDFetcher) Fetch(ctx context.Context, sub *model.Subscription) ([]mode
 
 // buildURL 构建请求 URL
 func (f *NVDFetcher) buildURL(sub *model.Subscription) string {
-	lastDay := time.Now().AddDate(0, 0, -7).Format("2006-01-02T15:04:05.000")
-	return fmt.Sprintf("%s?pubStartDate=%s", f.baseURL, lastDay)
+	now := time.Now().UTC()
+	yesterday := now.AddDate(0, 0, -1)
+	pubStart := yesterday.Format("2006-01-02T15:04:05Z")
+	pubEnd := now.Format("2006-01-02T15:04:05Z")
+	return fmt.Sprintf("%s?pubStartDate=%s&pubEndDate=%s&resultsPerPage=2000", f.baseURL, pubStart, pubEnd)
 }
 
 // parseVulns 解析漏洞数据
@@ -107,19 +126,25 @@ func (f *NVDFetcher) parseVulns(sub *model.Subscription, vulns []nvdVuln) []mode
 		desc := f.getDescription(v.CVE.Description)
 		score := f.getCVSSScore(v.CVE.Metrics)
 		severity := f.scoreSeverity(score)
-		pubTime, _ := time.Parse(time.RFC3339, v.CVE.Published)
+		pubTime, err := time.Parse(time.RFC3339, v.CVE.Published)
+		if err != nil {
+			pubTime = time.Now()
+		}
+		vendor, product := f.extractVendorProduct(v.CVE.Configurations)
 
 		event := model.SecurityEvent{
-			SubscriptionID: sub.ID,
-			Title:          v.CVE.ID,
-			Description:    desc,
-			SourceURL:      "https://nvd.nist.gov/vuln/detail/" + v.CVE.ID,
-			Severity:       severity,
-			CVEID:          v.CVE.ID,
-			CVSSScore:      score,
-			EventTime:      pubTime,
-			UniqueHash:     generateHash("nvd", v.CVE.ID),
-			CreatedAt:      time.Now(),
+			SubscriptionID:  sub.ID,
+			Title:           v.CVE.ID,
+			Description:     desc,
+			SourceURL:       "https://nvd.nist.gov/vuln/detail/" + v.CVE.ID,
+			Severity:        severity,
+			CVEID:           v.CVE.ID,
+			CVSSScore:       score,
+			AffectedVendor:  vendor,
+			AffectedProduct: product,
+			EventTime:       pubTime,
+			UniqueHash:      generateHash("nvd", v.CVE.ID),
+			CreatedAt:       time.Now(),
 		}
 		events = append(events, event)
 	}
@@ -161,4 +186,128 @@ func (f *NVDFetcher) scoreSeverity(score float64) model.SeverityLevel {
 	default:
 		return model.SeverityInfo
 	}
+}
+
+// extractVendorProduct 从 CPE 中提取厂商和产品
+func (f *NVDFetcher) extractVendorProduct(configs []nvdConfiguration) (vendor, product string) {
+	if len(configs) == 0 {
+		return "", ""
+	}
+
+	for _, config := range configs {
+		for _, node := range config.Nodes {
+			if len(node.CpeMatch) > 0 {
+				cpe := node.CpeMatch[0].Criteria
+				vendor, product = parseCPE(cpe)
+				if vendor != "" {
+					match := node.CpeMatch[0]
+					if match.VersionStartIncluding != "" || match.VersionEndExcluding != "" || match.VersionEndIncluding != "" {
+						versionRange := ""
+						if match.VersionStartIncluding != "" {
+							versionRange = match.VersionStartIncluding
+						}
+						if match.VersionEndExcluding != "" {
+							if versionRange != "" {
+								versionRange += " - " + match.VersionEndExcluding
+							} else {
+								versionRange = "< " + match.VersionEndExcluding
+							}
+						} else if match.VersionEndIncluding != "" {
+							if versionRange != "" {
+								versionRange += " - " + match.VersionEndIncluding
+							} else {
+								versionRange = "<= " + match.VersionEndIncluding
+							}
+						}
+						if versionRange != "" {
+							product += " " + versionRange
+						}
+					}
+					return vendor, product
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+// parseCPE 解析 CPE 字符串
+// 格式: cpe:2.3:a:vendor:product:version:...
+func parseCPE(cpe string) (vendor, product string) {
+	if cpe == "" {
+		return "", ""
+	}
+
+	// 分割 CPE 字符串
+	parts := splitCPE(cpe)
+	if len(parts) < 5 {
+		return "", ""
+	}
+
+	// parts[0] = "cpe"
+	// parts[1] = "2.3"
+	// parts[2] = "a" (application) / "o" (os) / "h" (hardware)
+	// parts[3] = vendor
+	// parts[4] = product
+
+	vendor = parts[3]
+	product = parts[4]
+
+	// 替换 CPE 中的特殊字符
+	vendor = replaceCPEChars(vendor)
+	product = replaceCPEChars(product)
+
+	return vendor, product
+}
+
+// splitCPE 分割 CPE 字符串
+func splitCPE(cpe string) []string {
+	var parts []string
+	var current string
+	escaped := false
+
+	for _, ch := range cpe {
+		if escaped {
+			current += string(ch)
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == ':' {
+			parts = append(parts, current)
+			current = ""
+			continue
+		}
+		current += string(ch)
+	}
+	if current != "" {
+		parts = append(parts, current)
+	}
+	return parts
+}
+
+// replaceCPEChars 替换 CPE 特殊字符
+func replaceCPEChars(s string) string {
+	if s == "*" || s == "-" {
+		return ""
+	}
+	// 将下划线替换为空格，首字母大写
+	result := ""
+	capitalize := true
+	for _, ch := range s {
+		if ch == '_' {
+			result += " "
+			capitalize = true
+		} else if capitalize && ch >= 'a' && ch <= 'z' {
+			result += string(ch - 32)
+			capitalize = false
+		} else {
+			result += string(ch)
+			capitalize = false
+		}
+	}
+	return result
 }

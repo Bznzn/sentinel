@@ -56,3 +56,15 @@ type SecurityAdvisory struct {
 	HTMLURL     string    `json:"html_url"`
 	PublishedAt time.Time `json:"published_at"`
 }
+
+// GlobalAdvisory 全局安全公告
+type GlobalAdvisory struct {
+	GHSAID      string    `json:"ghsa_id"`
+	CVEID       string    `json:"cve_id"`
+	Summary     string    `json:"summary"`
+	Description string    `json:"description"`
+	Severity    string    `json:"severity"`
+	HTMLURL     string    `json:"html_url"`
+	PublishedAt time.Time `json:"published_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}

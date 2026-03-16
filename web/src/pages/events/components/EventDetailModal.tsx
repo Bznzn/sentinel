@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import {
   X,
@@ -13,6 +13,7 @@ import {
   Loader2,
   Cpu,
   CheckCircle,
+  Check,
 } from 'lucide-react'
 import { cn, formatDate } from '@/utils'
 import type { SecurityEvent } from '@/types'
@@ -44,17 +45,34 @@ const statusConfig: Record<string, { label: string; class: string }> = {
 export default function EventDetailModal({ event, onClose, onUpdate }: EventDetailModalProps) {
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisResult, setAnalysisResult] = useState<{ risk_score: number; recommendation: string; confidence?: number } | null>(null)
+  const [eventDetail, setEventDetail] = useState<SecurityEvent | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [showSolutionModal, setShowSolutionModal] = useState(false)
+  const [solution, setSolution] = useState('')
+  const [updating, setUpdating] = useState(false)
+
+  useEffect(() => {
+    if (event?.id) {
+      setLoading(true)
+      eventService.get(event.id)
+        .then(setEventDetail)
+        .catch(() => toast.error('获取事件详情失败'))
+        .finally(() => setLoading(false))
+    }
+  }, [event?.id])
 
   if (!event) return null
+
+  const displayEvent = eventDetail || event
 
   const handleAnalyze = async () => {
     setAnalyzing(true)
     try {
-      const result = await eventService.analyze(event.id)
+      const result = await eventService.analyze(displayEvent.id)
       setAnalysisResult({ ...result, confidence: 75 + Math.floor(Math.random() * 20) })
       toast.success('AI分析完成')
       if (onUpdate) {
-        onUpdate({ ...event, risk_score: result.risk_score, recommendation: result.recommendation, severity: result.severity as any })
+        onUpdate({ ...displayEvent, risk_score: result.risk_score, recommendation: result.recommendation, severity: result.severity as any })
       }
     } catch (e: any) {
       toast.error(e.message || 'AI分析失败')
@@ -63,12 +81,29 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
     }
   }
 
-  const riskScore = analysisResult?.risk_score ?? event.risk_score ?? 0
-  const recommendation = analysisResult?.recommendation ?? event.recommendation
+  const updateStatus = async (status: string, sol?: string) => {
+    setUpdating(true)
+    try {
+      await eventService.updateStatus(displayEvent.id, status as any, sol)
+      toast.success('状态更新成功')
+      if (onUpdate) {
+        onUpdate({ ...displayEvent, status: status as any })
+      }
+      setShowSolutionModal(false)
+      setSolution('')
+    } catch (e: any) {
+      toast.error(e.message || '状态更新失败')
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  const riskScore = analysisResult?.risk_score ?? displayEvent.risk_score ?? 0
+  const recommendation = analysisResult?.recommendation ?? displayEvent.recommendation
   const confidence = analysisResult?.confidence ?? (riskScore > 0 ? 85 : 0)
 
-  const severity = severityConfig[event.severity] || severityConfig.info
-  const status = statusConfig[event.status || 'new'] || statusConfig.new
+  const severity = severityConfig[displayEvent.severity] || severityConfig.info
+  const status = statusConfig[displayEvent.status || 'new'] || statusConfig.new
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -81,13 +116,13 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
           <div className="flex-1 pr-4">
             <div className="flex items-center gap-2 mb-2">
               <span className={severity.class}>{severity.label}</span>
-              {event.cve_id && (
-                <span className="text-sm font-mono text-primary-400">{event.cve_id}</span>
+              {displayEvent.cve_id && (
+                <span className="text-sm font-mono text-primary-400">{displayEvent.cve_id}</span>
               )}
               <span className={cn('text-sm', status.class)}>· {status.label}</span>
             </div>
             <h2 className="text-lg font-medium text-gray-100 leading-tight">
-              {event.title}
+              {loading ? '加载中...' : displayEvent.title}
             </h2>
           </div>
           <button
@@ -107,33 +142,50 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
                 <Clock className="w-3.5 h-3.5" />
                 发现时间
               </div>
-              <p className="text-sm text-gray-200">{formatDate(event.event_time)}</p>
+              <p className="text-sm text-gray-200">{formatDate(displayEvent.event_time)}</p>
             </div>
             <div className="p-3 rounded-lg bg-gray-800">
               <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
                 <Shield className="w-3.5 h-3.5" />
                 数据来源
               </div>
-              <p className="text-sm text-gray-200">{event.source}</p>
+              {displayEvent.sub_script_url ? (
+                <a
+                  href={displayEvent.sub_script_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
+                >
+                  {displayEvent.source}
+                </a>
+              ) : (
+                <p className="text-sm text-gray-200">{displayEvent.source}</p>
+              )}
             </div>
-            {event.cvss_score && (
+            {displayEvent.cvss_score !== undefined && (
               <div className="p-3 rounded-lg bg-gray-800">
                 <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
                   <AlertTriangle className="w-3.5 h-3.5" />
                   CVSS 评分
                 </div>
-                <p className="text-sm text-gray-200 font-mono">
-                  {event.cvss_score}
-                  <span className="text-gray-500 ml-1">/ 10.0</span>
+                <p className={cn(
+                  'text-sm font-mono font-bold',
+                  displayEvent.cvss_score >= 9.0 ? 'text-red-500' :
+                  displayEvent.cvss_score >= 7.0 ? 'text-orange-500' :
+                  displayEvent.cvss_score >= 4.0 ? 'text-yellow-500' :
+                  displayEvent.cvss_score > 0 ? 'text-green-500' : 'text-gray-400'
+                )}>
+                  {displayEvent.cvss_score.toFixed(1)}
+                  <span className="text-gray-500 ml-1 font-normal">/ 10.0</span>
                 </p>
               </div>
             )}
-            {event.affected_vendor && (
+            {displayEvent.affected_vendor && (
               <div className="p-3 rounded-lg bg-gray-800">
                 <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
                   影响厂商
                 </div>
-                <p className="text-sm text-gray-200">{event.affected_vendor}</p>
+                <p className="text-sm text-gray-200">{displayEvent.affected_vendor}</p>
               </div>
             )}
           </div>
@@ -141,11 +193,11 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
           {/* Severity Alert */}
           <div className={cn(
             'alert',
-            event.severity === 'critical' && 'alert-danger',
-            event.severity === 'high' && 'alert-warning',
-            event.severity === 'medium' && 'alert-warning',
-            event.severity === 'low' && 'alert-info',
-            event.severity === 'info' && 'bg-gray-800 border-gray-700 text-gray-400'
+            displayEvent.severity === 'critical' && 'alert-danger',
+            displayEvent.severity === 'high' && 'alert-warning',
+            displayEvent.severity === 'medium' && 'alert-warning',
+            displayEvent.severity === 'low' && 'alert-info',
+            displayEvent.severity === 'info' && 'bg-gray-800 border-gray-700 text-gray-400'
           )}>
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
             <p className="text-sm">{severity.desc}</p>
@@ -168,7 +220,7 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
                   <div className="text-xs text-gray-500">风险评分</div>
                 </div>
                 <div className="p-2 rounded bg-slate-800">
-                  <div className="text-2xl font-bold text-orange-400">{event.affected_assets || 3}</div>
+                  <div className="text-2xl font-bold text-orange-400">{displayEvent.affected_assets || 3}</div>
                   <div className="text-xs text-gray-500">受影响资产</div>
                 </div>
                 <div className="p-2 rounded bg-slate-800">
@@ -191,7 +243,7 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
           <div>
             <h3 className="text-sm text-gray-500 mb-2">详细描述</h3>
             <div className="p-3 rounded-lg bg-gray-800 text-sm text-gray-200 leading-relaxed">
-              <Glossary text={event.description} />
+              <Glossary text={displayEvent.description} />
             </div>
           </div>
 
@@ -199,13 +251,13 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
           <div>
             <h3 className="text-sm text-gray-500 mb-2">原始链接</h3>
             <a
-              href={event.source_url}
+              href={displayEvent.source_url}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 p-3 rounded-lg bg-gray-800 text-sm text-primary-400 hover:text-primary-300 hover:bg-gray-700 transition-colors"
             >
               <ExternalLink className="w-4 h-4 flex-shrink-0" />
-              <span className="truncate">{event.source_url}</span>
+              <span className="truncate">{displayEvent.source_url}</span>
             </a>
           </div>
 
@@ -234,8 +286,9 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
                 </div>
               </div>
             ) : (
-              <div className="p-3 rounded-lg bg-gray-800 text-gray-500 text-sm">
-                点击"AI分析"获取风险评估
+              <div className="p-4 rounded-lg bg-gray-800 border border-gray-700 text-center">
+                <Brain className="w-8 h-8 text-gray-600 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">点击"AI分析"获取风险评估</p>
               </div>
             )}
           </div>
@@ -244,10 +297,8 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
           {recommendation && (
             <div>
               <h3 className="text-sm text-gray-500 mb-2">处置建议</h3>
-              <div className="p-3 rounded-lg bg-gray-800 text-sm text-gray-200 leading-relaxed">
-                <div className="prose prose-invert prose-sm max-w-none">
-                  <ReactMarkdown>{recommendation}</ReactMarkdown>
-                </div>
+              <div className="p-3 rounded-lg bg-gray-800 text-sm text-gray-200 leading-relaxed prose prose-invert prose-sm max-w-none prose-a:text-gray-200">
+                <ReactMarkdown>{recommendation}</ReactMarkdown>
               </div>
             </div>
           )}
@@ -256,7 +307,7 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
         {/* Footer Actions */}
         <div className="modal-footer">
           <button className="btn-default">
-            {event.is_starred ? (
+            {displayEvent.is_starred ? (
               <>
                 <Star className="w-4 h-4 fill-warning-500 text-warning-500" />
                 取消收藏
@@ -269,18 +320,56 @@ export default function EventDetailModal({ event, onClose, onUpdate }: EventDeta
             )}
           </button>
           <div className="flex-1" />
-          <select className="select w-32 h-8">
-            <option value="new">新建</option>
-            <option value="processing">处理中</option>
-            <option value="resolved">已解决</option>
-            <option value="ignored">已忽略</option>
-          </select>
+          {displayEvent.status !== 'resolved' && (
+            <button
+              className="btn-primary"
+              onClick={() => setShowSolutionModal(true)}
+              disabled={updating}
+            >
+              <Check className="w-4 h-4" />
+              标记已解决
+            </button>
+          )}
           <button className="btn-primary">
             <FileText className="w-4 h-4" />
             生成报告
           </button>
         </div>
       </div>
+
+      {/* Solution Modal */}
+      {showSolutionModal && (
+        <div className="modal-overlay" onClick={() => setShowSolutionModal(false)}>
+          <div className="modal w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="text-lg font-medium">标记为已解决</h3>
+              <button onClick={() => setShowSolutionModal(false)} className="p-1.5 rounded hover:bg-gray-800">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="modal-body">
+              <label className="block text-sm text-gray-400 mb-2">请输入解决方案</label>
+              <textarea
+                className="input w-full h-32 resize-none"
+                placeholder="描述如何解决此安全事件..."
+                value={solution}
+                onChange={(e) => setSolution(e.target.value)}
+              />
+            </div>
+            <div className="modal-footer">
+              <button className="btn-default" onClick={() => setShowSolutionModal(false)}>取消</button>
+              <button
+                className="btn-primary"
+                onClick={() => updateStatus('resolved', solution)}
+                disabled={updating || !solution.trim()}
+              >
+                {updating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

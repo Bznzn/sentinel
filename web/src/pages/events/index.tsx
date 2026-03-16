@@ -405,13 +405,15 @@ export default function Events() {
                                     <Clock className="w-4 h-4" />
                                     标记处理中
                                   </button>
-                                  <button
-                                    className="dropdown-item w-full text-success-500"
-                                    onClick={() => handleUpdateStatus(event.id, 'resolved')}
-                                  >
-                                    <Check className="w-4 h-4" />
-                                    标记已解决
-                                  </button>
+                                  {event.status !== 'resolved' && (
+                                    <button
+                                      className="dropdown-item w-full text-success-500"
+                                      onClick={() => handleUpdateStatus(event.id, 'resolved')}
+                                    >
+                                      <Check className="w-4 h-4" />
+                                      标记已解决
+                                    </button>
+                                  )}
                                   <button
                                     className="dropdown-item w-full text-gray-500"
                                     onClick={() => handleUpdateStatus(event.id, 'ignored')}

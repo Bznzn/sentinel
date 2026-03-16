@@ -31,7 +31,7 @@ const sourceTypes = [
     label: 'NVD 漏洞库',
     icon: Database,
     description: '订阅 NVD 国家漏洞数据库',
-    placeholder: '关键词过滤（可选）',
+    placeholder: 'https://services.nvd.nist.gov/rest/json/cves/2.0',
   },
   {
     value: 'cve',
@@ -216,11 +216,10 @@ export default function AddSubscriptionModal({
                 </div>
 
                 {/* URL */}
-                {sourceType !== 'webhook' && (
+                {sourceType !== 'webhook' && sourceType !== 'cve' && (
                   <div className="form-item">
                     <label className="label">
-                      {sourceType === 'nvd' || sourceType === 'cve' ? '关键词' : '订阅地址'}
-                      {sourceType !== 'nvd' && sourceType !== 'cve' && <span className="text-danger-500">*</span>}
+                      订阅地址 <span className="text-danger-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -309,7 +308,7 @@ export default function AddSubscriptionModal({
               </button>
               <button
                 onClick={handleSubmit}
-                disabled={!formData.name || (sourceType !== 'webhook' && sourceType !== 'nvd' && sourceType !== 'cve' && !formData.url) || isSubmitting}
+                disabled={!formData.name || (sourceType !== 'webhook' && sourceType !== 'cve' && !formData.url) || isSubmitting}
                 className="btn-primary"
               >
                 {isSubmitting ? (

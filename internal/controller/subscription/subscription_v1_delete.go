@@ -5,6 +5,7 @@ import (
 
 	v1 "SuperBizAgent/api/subscription/v1"
 	"SuperBizAgent/internal/logic/subscription"
+	"SuperBizAgent/internal/service"
 )
 
 // Delete 删除订阅
@@ -14,6 +15,9 @@ func (c *ControllerV1) Delete(ctx context.Context, req *v1.DeleteReq) (*v1.Delet
 	if err := svc.Delete(ctx, req.ID); err != nil {
 		return nil, err
 	}
+
+	// 从调度器移除
+	service.RemoveSubscriptionFromScheduler(req.ID)
 
 	return &v1.DeleteRes{}, nil
 }

@@ -63,8 +63,8 @@ export const eventService = {
   },
 
   // 更新事件状态
-  async updateStatus(id: number, status: EventStatus): Promise<void> {
-    await api.put(`/event/${id}/status`, { status })
+  async updateStatus(id: number, status: EventStatus, solution?: string): Promise<void> {
+    await api.put(`/event/${id}/status`, { status, solution })
   },
 
   // 批量更新事件状态

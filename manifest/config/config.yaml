@@ -23,7 +23,7 @@ doubao_embedding_model:
   api_key: "835e2da6-579d-459f-8818-8d48a7431541"
   model: "ep-20260222183953-gv8q5"
 
-file_dir: "/你的路径/SuperBizAgent/internal/ai/cmd/knowledge_cmd/docs"
+file_dir: " D:/desktop/bzn/sentinel/internal/ai/cmd/knowledge_cmd/docs"
 
 # 数据库配置
 database:

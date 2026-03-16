@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"context"
+	"log"
 	"sync"
 
 	"SuperBizAgent/internal/model"
@@ -38,6 +39,7 @@ func (m *Manager) Get(t model.SourceType) Fetcher {
 func (m *Manager) Fetch(ctx context.Context, sub *model.Subscription) ([]model.SecurityEvent, error) {
 	f := m.Get(sub.SourceType)
 	if f == nil {
+		log.Printf("Fetcher for %s not found", sub.SourceType)
 		return nil, nil
 	}
 	return f.Fetch(ctx, sub)

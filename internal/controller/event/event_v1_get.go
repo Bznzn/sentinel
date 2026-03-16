@@ -23,19 +23,29 @@ func (c *Controller) Get(ctx context.Context, req *v1.GetReq) (*v1.GetRes, error
 		affectedAssets = 1
 	}
 
+	subScriptURL := ""
+	subScriptName := ""
+	if e.Subscription != nil {
+		subScriptURL = e.Subscription.SourceURL
+		subScriptName = e.Subscription.Name
+	}
+
 	return &v1.GetRes{
 		ID:             e.ID,
 		Title:          e.Title,
 		Description:    e.Description,
 		Severity:       string(e.Severity),
 		Status:         string(e.Status),
+		Source:         subScriptName,
+		SourceURL:      e.SourceURL,
+		SubScriptURL:   subScriptURL,
 		CVEID:          e.CVEID,
 		CVSSScore:      e.CVSSScore,
-		SourceURL:      e.SourceURL,
 		EventTime:      e.EventTime.Format("2006-01-02 15:04:05"),
 		CreatedAt:      e.CreatedAt.Format("2006-01-02 15:04:05"),
 		RiskScore:      e.RiskScore,
 		Recommendation: e.Recommendation,
 		AffectedAssets: affectedAssets,
+		AffectedVendor: e.AffectedVendor,
 	}, nil
 }

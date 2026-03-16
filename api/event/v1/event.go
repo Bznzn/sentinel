@@ -22,17 +22,20 @@ type ListRes struct {
 
 // EventItem 事件列表项
 type EventItem struct {
-	ID        uint    `json:"id"`
-	Title     string  `json:"title"`
-	Severity  string  `json:"severity"`
-	Status    string  `json:"status"`
-	Source    string  `json:"source"`
-	SourceURL string  `json:"source_url"`
-	CVEID     string  `json:"cve_id"`
-	CVSSScore float64 `json:"cvss_score"`
-	EventTime string  `json:"event_time"`
-	RiskScore int     `json:"risk_score"`
-	IsStarred bool    `json:"is_starred"`
+	ID             uint    `json:"id"`
+	Title          string  `json:"title"`
+	Severity       string  `json:"severity"`
+	Status         string  `json:"status"`
+	Source         string  `json:"source"`
+	SourceURL      string  `json:"source_url"`
+	CVEID          string  `json:"cve_id"`
+	CVSSScore      float64 `json:"cvss_score"`
+	EventTime      string  `json:"event_time"`
+	RiskScore      int     `json:"risk_score"`
+	IsStarred      bool    `json:"is_starred"`
+	SubScriptURL   string  `json:"sub_script_url"`
+	Description    string  `json:"description"`
+	Recommendation string  `json:"recommendation"`
 }
 
 // GetReq 获取事件详情请求
@@ -48,21 +51,25 @@ type GetRes struct {
 	Description    string  `json:"description"`
 	Severity       string  `json:"severity"`
 	Status         string  `json:"status"`
+	Source         string  `json:"source"`
+	SourceURL      string  `json:"source_url"`
+	SubScriptURL   string  `json:"sub_script_url"`
 	CVEID          string  `json:"cve_id"`
 	CVSSScore      float64 `json:"cvss_score"`
-	SourceURL      string  `json:"source_url"`
 	EventTime      string  `json:"event_time"`
 	CreatedAt      string  `json:"created_at"`
 	RiskScore      int     `json:"risk_score"`
 	Recommendation string  `json:"recommendation"`
 	AffectedAssets int     `json:"affected_assets"`
+	AffectedVendor string  `json:"affected_vendor"`
 }
 
 // UpdateStatusReq 更新事件状态请求
 type UpdateStatusReq struct {
-	g.Meta `path:"/event/{id}/status" method:"put" tags:"Event" summary:"更新事件状态"`
-	ID     uint   `json:"id" in:"path" v:"required" dc:"事件ID"`
-	Status string `json:"status" v:"required" dc:"事件状态"`
+	g.Meta   `path:"/event/{id}/status" method:"put" tags:"Event" summary:"更新事件状态"`
+	ID       uint   `json:"id" in:"path" v:"required" dc:"事件ID"`
+	Status   string `json:"status" v:"required" dc:"事件状态"`
+	Solution string `json:"solution" dc:"解决方案"`
 }
 
 // UpdateStatusRes 更新事件状态响应
@@ -85,12 +92,12 @@ type StatsReq struct {
 
 // StatsRes 获取事件统计响应
 type StatsRes struct {
-	Total        int64            `json:"total"`
-	TodayCount   int64            `json:"today_count"`
-	CriticalCount int64           `json:"critical_count"`
-	HighCount    int64            `json:"high_count"`
-	BySeverity   map[string]int64 `json:"by_severity"`
-	ByStatus     map[string]int64 `json:"by_status"`
+	Total         int64            `json:"total"`
+	TodayCount    int64            `json:"today_count"`
+	CriticalCount int64            `json:"critical_count"`
+	HighCount     int64            `json:"high_count"`
+	BySeverity    map[string]int64 `json:"by_severity"`
+	ByStatus      map[string]int64 `json:"by_status"`
 }
 
 // TrendReq 获取事件趋势请求

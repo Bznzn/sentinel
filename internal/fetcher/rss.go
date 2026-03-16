@@ -38,6 +38,12 @@ type rssChannel struct {
 	Items []rssItem `xml:"item"`
 }
 
+// RDF Feed 结构 (RSS 1.0)
+type rdfFeed struct {
+	XMLName xml.Name  `xml:"RDF"`
+	Items   []rssItem `xml:"item"`
+}
+
 type rssItem struct {
 	Title       string `xml:"title"`
 	Link        string `xml:"link"`
@@ -67,7 +73,20 @@ func (f *RSSFetcher) Fetch(ctx context.Context, sub *model.Subscription) ([]mode
 
 	var feed rssFeed
 	if err := xml.NewDecoder(resp.Body).Decode(&feed); err != nil {
-		return nil, err
+		// 尝试 RDF 格式
+		resp.Body.Close()
+		req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, sub.SourceURL, nil)
+		resp2, err2 := f.httpClient.Do(req2)
+		if err2 != nil {
+			return nil, err
+		}
+		defer resp2.Body.Close()
+
+		var rdfFeed rdfFeed
+		if err := xml.NewDecoder(resp2.Body).Decode(&rdfFeed); err != nil {
+			return nil, err
+		}
+		return f.parseItems(sub, rdfFeed.Items), nil
 	}
 
 	return f.parseItems(sub, feed.Channel.Items), nil

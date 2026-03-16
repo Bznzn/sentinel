@@ -2,20 +2,71 @@ package service
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"SuperBizAgent/internal/database"
 	"SuperBizAgent/internal/fetcher"
+	"SuperBizAgent/internal/logic/subscription"
 	"SuperBizAgent/internal/model"
+	"SuperBizAgent/internal/scheduler"
 )
 
-var fetchManager *fetcher.Manager
+var (
+	fetchManager    *fetcher.Manager
+	globalScheduler *scheduler.Scheduler
+)
 
 func InitFetcher() {
 	fetchManager = fetcher.NewManager()
 	fetchManager.Register(fetcher.NewRSSFetcher())
 	fetchManager.Register(fetcher.NewGitHubFetcher())
-	go runFetchLoop()
+	fetchManager.Register(fetcher.NewNVDFetcher(""))
+
+	// 初始化调度器
+	globalScheduler = scheduler.New(schedulerHandler)
+	globalScheduler.Start()
+
+	// 加载所有激活的订阅
+	loadActiveSubscriptions()
+}
+
+// schedulerHandler 调度器处理函数
+func schedulerHandler(ctx context.Context, sub *model.Subscription) error {
+	_, err := FetchSubscription(sub)
+	return err
+}
+
+// loadActiveSubscriptions 加载所有激活的订阅到调度器
+func loadActiveSubscriptions() {
+	ctx := context.Background()
+	svc := subscription.NewService()
+
+	subs, err := svc.GetActiveSubscriptions(ctx)
+	if err != nil {
+		log.Printf("failed to load active subscriptions: %v", err)
+		return
+	}
+
+	for _, sub := range subs {
+		globalScheduler.Add(sub)
+	}
+
+	log.Printf("loaded %d active subscriptions to scheduler", len(subs))
+}
+
+// AddSubscriptionToScheduler 添加订阅到调度器
+func AddSubscriptionToScheduler(sub *model.Subscription) {
+	if globalScheduler != nil {
+		globalScheduler.Add(sub)
+	}
+}
+
+// RemoveSubscriptionFromScheduler 从调度器移除订阅
+func RemoveSubscriptionFromScheduler(id uint) {
+	if globalScheduler != nil {
+		globalScheduler.Remove(id)
+	}
 }
 
 func runFetchLoop() {
@@ -38,7 +89,9 @@ func fetchAllActive() {
 		sem <- struct{}{}
 		go func(s model.Subscription) {
 			defer func() { <-sem }()
-			FetchSubscription(&s)
+			if _, err := FetchSubscription(&s); err != nil {
+				log.Printf("fetch subscription err: %v", err)
+			}
 		}(sub)
 	}
 }
@@ -53,6 +106,7 @@ type FetchResult struct {
 
 func FetchSubscription(sub *model.Subscription) (*FetchResult, error) {
 	if fetchManager == nil {
+		log.Println("fetchManager is not initialized")
 		return &FetchResult{}, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -63,22 +117,22 @@ func FetchSubscription(sub *model.Subscription) (*FetchResult, error) {
 	duration := int(time.Since(start).Milliseconds())
 
 	db := database.GetDB()
-	log := &model.FetchLog{
+	logg := &model.FetchLog{
 		SubscriptionID: sub.ID,
 		Duration:       duration,
 		CreatedAt:      time.Now(),
 	}
 
 	if err != nil {
-		log.Status = model.FetchStatusFailed
-		log.ErrorMsg = err.Error()
-		db.Create(log)
+		logg.Status = model.FetchStatusFailed
+		logg.ErrorMsg = err.Error()
+		db.Create(logg)
 		return &FetchResult{Duration: duration}, err
 	}
 
-	log.Status = model.FetchStatusSuccess
-	log.EventCount = len(events)
-	db.Create(log)
+	logg.Status = model.FetchStatusSuccess
+	logg.EventCount = len(events)
+	db.Create(logg)
 
 	// 保存事件(去重)
 	newCount := 0

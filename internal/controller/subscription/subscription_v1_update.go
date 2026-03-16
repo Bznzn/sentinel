@@ -6,6 +6,7 @@ import (
 	v1 "SuperBizAgent/api/subscription/v1"
 	"SuperBizAgent/internal/logic/subscription"
 	"SuperBizAgent/internal/model"
+	"SuperBizAgent/internal/service"
 )
 
 // Update 更新订阅
@@ -38,6 +39,12 @@ func (c *ControllerV1) Update(ctx context.Context, req *v1.UpdateReq) (*v1.Updat
 
 	if err := svc.Update(ctx, sub); err != nil {
 		return nil, err
+	}
+
+	// 更新调度器
+	service.RemoveSubscriptionFromScheduler(sub.ID)
+	if sub.Status == model.StatusActive {
+		service.AddSubscriptionToScheduler(sub)
 	}
 
 	return &v1.UpdateRes{}, nil

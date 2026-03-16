@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Plus,
   Search,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react'
 import { cn, formatRelativeTime, getSourceTypeLabel } from '@/utils'
 import AddSubscriptionModal from './components/AddSubscriptionModal'
+import EditSubscriptionModal from './components/EditSubscriptionModal'
 import { subscriptionService } from '@/services/subscription'
 import type { Subscription } from '@/types'
 import toast from 'react-hot-toast'
@@ -54,7 +56,10 @@ const statusConfig = {
 }
 
 export default function Subscriptions() {
+  const navigate = useNavigate()
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterType, setFilterType] = useState<string>('all')
   const [filterStatus, setFilterStatus] = useState<string>('all')
@@ -131,6 +136,12 @@ export default function Subscriptions() {
     } catch (error) {
       toast.error('抓取失败', { id: 'fetch' })
     }
+    setActiveDropdown(null)
+  }
+
+  const handleEdit = (sub: Subscription) => {
+    setEditingSubscription(sub)
+    setShowEditModal(true)
     setActiveDropdown(null)
   }
 
@@ -312,11 +323,17 @@ export default function Subscriptions() {
                                   <RefreshCw className="w-4 h-4" />
                                   立即抓取
                                 </button>
-                                <button className="dropdown-item w-full">
+                                <button
+                                  className="dropdown-item w-full"
+                                  onClick={() => navigate(`/logs?subscription=${sub.id}`)}
+                                >
                                   <FileSearch className="w-4 h-4" />
                                   查看日志
                                 </button>
-                                <button className="dropdown-item w-full">
+                                <button
+                                  className="dropdown-item w-full"
+                                  onClick={() => handleEdit(sub)}
+                                >
                                   <Edit className="w-4 h-4" />
                                   编辑
                                 </button>
@@ -404,6 +421,14 @@ export default function Subscriptions() {
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
         onSuccess={fetchSubscriptions}
+      />
+
+      {/* Edit Modal */}
+      <EditSubscriptionModal
+        isOpen={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        onSuccess={fetchSubscriptions}
+        subscription={editingSubscription}
       />
     </div>
   )

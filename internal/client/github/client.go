@@ -104,3 +104,18 @@ func (c *Client) GetSecurityAdvisories(ctx context.Context, owner, repo string) 
 	}
 	return result, nil
 }
+
+// GetGlobalAdvisories 获取全局安全公告
+func (c *Client) GetGlobalAdvisories(ctx context.Context, limit int) ([]GlobalAdvisory, error) {
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02T15:04:05Z")
+	path := fmt.Sprintf("/advisories?updated>=%s&per_page=%d", yesterday, limit)
+	resp, err := c.doRequest(ctx, http.MethodGet, path)
+	if err != nil {
+		return nil, err
+	}
+	var result []GlobalAdvisory
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"SuperBizAgent/internal/model"
+	"github.com/robfig/cron/v3"
 )
 
 // Job 调度任务
@@ -107,10 +108,16 @@ func (s *Scheduler) execute(j *Job) {
 
 	_ = s.handler(s.ctx, sub)
 
-	// 更新下次执行时间
+	// 解析 cron 表达式计算下次执行时间
 	s.mu.Lock()
 	if job, ok := s.jobs[j.ID]; ok {
-		job.NextRun = time.Now().Add(time.Hour)
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		schedule, err := parser.Parse(sub.CronExpr)
+		if err == nil {
+			job.NextRun = schedule.Next(time.Now())
+		} else {
+			job.NextRun = time.Now().Add(time.Hour)
+		}
 	}
 	s.mu.Unlock()
 }

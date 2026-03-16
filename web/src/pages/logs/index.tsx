@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Search,
   RefreshCw,
@@ -38,6 +39,7 @@ interface FetchLogWithSubscription extends FetchLog {
 }
 
 export default function Logs() {
+  const [searchParams] = useSearchParams()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sourceFilter, _setSourceFilter] = useState('all')
@@ -57,6 +59,12 @@ export default function Logs() {
     try {
       const res = await subscriptionService.list(1, 100)
       setSubscriptions(res.list || [])
+
+      // 从 URL 参数获取订阅 ID
+      const subId = searchParams.get('subscription')
+      if (subId) {
+        setSelectedSubscriptionId(Number(subId))
+      }
     } catch (error) {
       console.error(error)
     } finally {
